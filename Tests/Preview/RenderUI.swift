@@ -27,6 +27,7 @@ enum RenderUI {
         }
         defer { defaults.removePersistentDomain(forName: domain) }
         let preferences = WallpaperPreferences(defaults: defaults)
+        preferences.language = .russian
         preferences.restoreOnLaunch = false
         preferences.wallpaperEnabled = false
         if CommandLine.arguments.count > 2 {
@@ -66,6 +67,7 @@ enum RenderUI {
         }
         defer { emptyDefaults.removePersistentDomain(forName: emptyDomain) }
         let emptyPreferences = WallpaperPreferences(defaults: emptyDefaults)
+        emptyPreferences.language = .russian
         emptyPreferences.restoreOnLaunch = false
         emptyPreferences.wallpaperEnabled = false
         let emptyLoginItems = LoginItemController(service: PreviewLoginService(), notificationCenter: NotificationCenter())
@@ -96,6 +98,40 @@ enum RenderUI {
         }
         try await renderUpdateStates(output: output, sizes: sizes)
         try await renderLoginStates(output: output)
+        try await renderLocalizedAudioStates(model: model, output: output)
+    }
+
+    @MainActor
+    private static func renderLocalizedAudioStates(model: WallpaperModel, output: URL) async throws {
+        let size = NSSize(width: 820, height: 616)
+        let themes: [(String, ColorScheme)] = [("light", .light), ("dark", .dark)]
+        model.language = .english
+        for (theme, scheme) in themes {
+            for section in AppSection.allCases {
+                let name = "ui-en-\(section.rawValue)-\(theme)-compact.png"
+                try await capture(model, section: section, scheme: scheme,
+                                  size: size, to: output.appendingPathComponent(name))
+            }
+        }
+
+        // A non-default level remains available while muted. These models have
+        // no wallpaper surfaces, so neither state can play video or produce sound.
+        model.volume = 0.35
+        for (code, language) in [("ru", AppLanguage.russian), ("en", AppLanguage.english)] {
+            model.language = language
+            for isMuted in [true, false] {
+                model.isMuted = isMuted
+                guard !model.hasWallpaper, !model.isPlaying, abs(model.volume - 0.35) < 0.000_001 else {
+                    throw PreviewFailure(message: "The audio preview changed playback or its saved level.")
+                }
+                for (theme, scheme) in themes {
+                    let state = isMuted ? "muted" : "unmuted"
+                    let name = "ui-audio-\(code)-\(state)-\(theme)-compact.png"
+                    try await capture(model, section: .general, scheme: scheme,
+                                      size: size, to: output.appendingPathComponent(name))
+                }
+            }
+        }
     }
 
     @MainActor
@@ -108,6 +144,7 @@ enum RenderUI {
             }
             defer { defaults.removePersistentDomain(forName: domain) }
             let preferences = WallpaperPreferences(defaults: defaults)
+            preferences.language = .russian
             preferences.restoreOnLaunch = false
             preferences.wallpaperEnabled = false
             let gate = PreviewUpdateGate()
@@ -171,6 +208,7 @@ enum RenderUI {
             }
             defer { defaults.removePersistentDomain(forName: domain) }
             let preferences = WallpaperPreferences(defaults: defaults)
+            preferences.language = .russian
             preferences.restoreOnLaunch = false
             preferences.wallpaperEnabled = false
             let service = PreviewLoginService(

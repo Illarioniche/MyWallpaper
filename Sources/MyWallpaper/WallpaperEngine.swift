@@ -11,7 +11,7 @@ final class WallpaperEngine: ObservableObject {
     @Published private(set) var occludedDisplayCount = 0
     @Published private(set) var displayCount = 0
 
-    var onPlaybackError: ((String) -> Void)?
+    var onPlaybackError: ((String, String?) -> Void)?
     private(set) var posterImage: CGImage?
 
     private var asset: AVURLAsset?
@@ -19,7 +19,7 @@ final class WallpaperEngine: ObservableObject {
     private var screenObserver: NSObjectProtocol?
     private var target: DisplayTarget = .all
     private var scaling: VideoScaling = .fill
-    private var isMuted = true
+    private var audio = WallpaperAudioSettings()
     private var pauseWhenCovered = true
     private var playbackEnabled = false
     private var loadGeneration = 0
@@ -71,17 +71,28 @@ final class WallpaperEngine: ObservableObject {
     }
 
     func configure(target: DisplayTarget, scaling: VideoScaling, isMuted: Bool,
-                   pauseWhenCovered: Bool = true) {
+                   pauseWhenCovered: Bool = true, volume: Float = 1) {
         let screensChanged = self.target != target
+        let onlyAudioChanged = !screensChanged && self.scaling == scaling
+            && self.pauseWhenCovered == pauseWhenCovered
         self.target = target
         self.scaling = scaling
-        self.isMuted = isMuted
+        self.audio = WallpaperAudioSettings(isMuted: isMuted, volume: volume)
         self.pauseWhenCovered = pauseWhenCovered
+
+        if onlyAudioChanged {
+            // Slider changes must not query other windows, rebuild surfaces,
+            // or reevaluate whether a paused video should start playing.
+            for (index, surface) in surfaces.enumerated() {
+                surface.configureAudio(audio.forDisplay(at: index))
+            }
+            return
+        }
         if screensChanged, asset != nil {
             rebuildSurfaces()
         } else {
             for (index, surface) in surfaces.enumerated() {
-                surface.configure(scaling: scaling, isMuted: isMuted || index != 0,
+                surface.configure(scaling: scaling, audio: audio.forDisplay(at: index),
                                   pauseWhenCovered: pauseWhenCovered)
             }
             updateCoverageMonitoring()
@@ -144,16 +155,16 @@ final class WallpaperEngine: ObservableObject {
                 posterImage: posterImage,
                 screen: screen,
                 scaling: scaling,
-                isMuted: isMuted || index != 0,
+                audio: audio.forDisplay(at: index),
                 pauseWhenCovered: pauseWhenCovered,
                 onStateChanged: { [weak self] in
                     guard let self, self.surfaceGeneration == generation else { return }
                     self.refreshPlaybackState()
                 },
-                onFailure: { [weak self] message in
+                onFailure: { [weak self] message, detail in
                     guard let self, self.surfaceGeneration == generation else { return }
                     self.stop()
-                    self.onPlaybackError?(message)
+                    self.onPlaybackError?(message, detail)
                 }
             )
             surfaces.append(surface)
@@ -220,7 +231,7 @@ private final class WallpaperSurface {
     private var currentItemObservation: NSKeyValueObservation?
     private var occlusionObserver: NSObjectProtocol?
     private let onStateChanged: @MainActor () -> Void
-    private let onFailure: @MainActor (String) -> Void
+    private let onFailure: @MainActor (String, String?) -> Void
     private var disposed = false
     private var playbackEnabled = false
     private var pauseWhenCovered: Bool
@@ -236,17 +247,17 @@ private final class WallpaperSurface {
         posterImage: CGImage,
         screen: NSScreen,
         scaling: VideoScaling,
-        isMuted: Bool,
+        audio: WallpaperAudioSettings,
         pauseWhenCovered: Bool,
         onStateChanged: @escaping @MainActor () -> Void,
-        onFailure: @escaping @MainActor (String) -> Void
+        onFailure: @escaping @MainActor (String, String?) -> Void
     ) {
         self.onStateChanged = onStateChanged
         self.onFailure = onFailure
         self.pauseWhenCovered = pauseWhenCovered
 
         player = AVQueuePlayer()
-        player.isMuted = isMuted
+        audio.apply(to: player)
         player.preventsDisplaySleepDuringVideoPlayback = false
         looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(asset: asset))
         videoView = WallpaperVideoView(frame: NSRect(origin: .zero, size: screen.frame.size))
@@ -309,8 +320,12 @@ private final class WallpaperSurface {
         applyPlaybackPolicy()
     }
 
-    func configure(scaling: VideoScaling, isMuted: Bool, pauseWhenCovered: Bool) {
-        player.isMuted = isMuted
+    func configureAudio(_ audio: WallpaperAudioSettings) {
+        audio.apply(to: player)
+    }
+
+    func configure(scaling: VideoScaling, audio: WallpaperAudioSettings, pauseWhenCovered: Bool) {
+        configureAudio(audio)
         videoView.configure(scaling: scaling)
         self.pauseWhenCovered = pauseWhenCovered
         applyPlaybackPolicy()
@@ -412,9 +427,7 @@ private final class WallpaperSurface {
 
     private func reportFailure(_ detail: String?) {
         guard !disposed else { return }
-        var message = "Не удалось воспроизвести видео. Попробуйте выбрать другой файл."
-        if let detail, !detail.isEmpty { message += "\n\n" + detail }
-        onFailure(message)
+        onFailure("Не удалось воспроизвести видео. Попробуйте выбрать другой файл.", detail)
     }
 }
 

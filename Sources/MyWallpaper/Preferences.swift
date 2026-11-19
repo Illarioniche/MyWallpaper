@@ -70,6 +70,16 @@ struct WallpaperPreferences {
         nonmutating set { defaults.set(newValue, forKey: "isMuted") }
     }
 
+    var volume: Double {
+        get { Double(WallpaperAudioSettings.normalizedVolume(Float(defaults.object(forKey: "videoVolume") as? Double ?? 1))) }
+        nonmutating set { defaults.set(Double(WallpaperAudioSettings.normalizedVolume(Float(newValue))), forKey: "videoVolume") }
+    }
+
+    var language: AppLanguage {
+        get { AppLanguage(rawValue: defaults.string(forKey: "appLanguage") ?? "") ?? .system }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: "appLanguage") }
+    }
+
     var pauseInLowPowerMode: Bool {
         get { defaults.object(forKey: "pauseInLowPowerMode") as? Bool ?? true }
         nonmutating set { defaults.set(newValue, forKey: "pauseInLowPowerMode") }

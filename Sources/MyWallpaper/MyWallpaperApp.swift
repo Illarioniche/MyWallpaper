@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.onOpenUpdates = { [weak self] in self?.showUpdates() }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = AppIconArtwork.menuBarImage()
-        item.button?.toolTip = "MyWallpaper — живые обои"
+        item.button?.toolTip = model.localizer.text("MyWallpaper — живые обои")
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
@@ -87,24 +87,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(status)
         menu.addItem(.separator())
         if let release = model.updates.availableRelease {
-            let update = addItem("Доступна версия \(release.version)…", action: #selector(showUpdates), to: menu)
+            let update = addItem(model.localizer.format("Доступна версия %@…", release.version), action: #selector(showUpdates), to: menu)
             update.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
             menu.addItem(.separator())
         }
-        addItem("Открыть MyWallpaper…", action: #selector(showWindow), to: menu)
-        addItem("Выбрать видео…", action: #selector(chooseVideo), key: "o", to: menu)
-        let playback = addItem(model.hasWallpaper ? model.playbackButtonTitle : "Включить обои",
+        addItem(model.localizer.text("Открыть MyWallpaper…"), action: #selector(showWindow), to: menu)
+        addItem(model.localizer.text("Выбрать видео…"), action: #selector(chooseVideo), key: "o", to: menu)
+        let playback = addItem(model.hasWallpaper ? model.playbackButtonTitle : model.localizer.text("Включить обои"),
                               action: #selector(togglePlayback), to: menu)
         playback.isEnabled = !model.isLoading && model.selectedURL != nil
-        let stop = addItem("Выключить обои", action: #selector(stopWallpaper), to: menu)
+        let stop = addItem(model.localizer.text("Выключить обои"), action: #selector(stopWallpaper), to: menu)
         stop.isEnabled = model.hasWallpaper || model.isLoading
         menu.addItem(.separator())
-        let settingsItem = NSMenuItem(title: "Настройки", action: nil, keyEquivalent: "")
+        let settingsItem = NSMenuItem(title: model.localizer.text("Настройки"), action: nil, keyEquivalent: "")
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         settingsItem.submenu = settings.makeMenu()
         menu.addItem(settingsItem)
         menu.addItem(.separator())
-        addItem("Завершить MyWallpaper", action: #selector(quit), key: "q", to: menu)
+        addItem(model.localizer.text("Завершить MyWallpaper"), action: #selector(quit), key: "q", to: menu)
     }
 
     @objc private func showWindow() {
@@ -152,6 +152,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func startUpdateChecks() {
+        model.$language.dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.buildMainMenu()
+                    self?.refreshUpdateIndicator()
+                }
+            }
+            .store(in: &subscriptions)
         model.updates.objectWillChange
             .sink { [weak self] _ in
                 Task { @MainActor in self?.refreshUpdateIndicator() }
@@ -187,8 +195,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refreshUpdateIndicator() {
         let release = model.updates.availableRelease
         statusItem?.button?.image = AppIconArtwork.menuBarImage(hasUpdate: release != nil)
-        statusItem?.button?.toolTip = release.map { "MyWallpaper — доступна версия \($0.version)" }
-            ?? "MyWallpaper — живые обои"
+        statusItem?.button?.toolTip = release.map { model.localizer.format("MyWallpaper — доступна версия %@", $0.version) }
+            ?? model.localizer.text("MyWallpaper — живые обои")
+        statusItem?.button?.setAccessibilityLabel(statusItem?.button?.toolTip)
     }
 
     @discardableResult
@@ -203,17 +212,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        addItem("О MyWallpaper", action: #selector(showWindow), to: appMenu)
-        addItem("Настройки…", action: #selector(showSettings), key: ",", to: appMenu)
-        addItem("Проверить обновления…", action: #selector(checkForUpdates), to: appMenu)
+        addItem(model.localizer.text("О MyWallpaper"), action: #selector(showWindow), to: appMenu)
+        addItem(model.localizer.text("Настройки…"), action: #selector(showSettings), key: ",", to: appMenu)
+        addItem(model.localizer.text("Проверить обновления…"), action: #selector(checkForUpdates), to: appMenu)
         appMenu.addItem(.separator())
-        addItem("Завершить MyWallpaper", action: #selector(quit), key: "q", to: appMenu)
+        addItem(model.localizer.text("Завершить MyWallpaper"), action: #selector(quit), key: "q", to: appMenu)
         appItem.submenu = appMenu
         menu.addItem(appItem)
         let fileItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "Файл")
-        addItem("Выбрать видео…", action: #selector(chooseVideo), key: "o", to: fileMenu)
-        fileMenu.addItem(withTitle: "Закрыть окно", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let fileMenu = NSMenu(title: model.localizer.text("Файл"))
+        addItem(model.localizer.text("Выбрать видео…"), action: #selector(chooseVideo), key: "o", to: fileMenu)
+        fileMenu.addItem(withTitle: model.localizer.text("Закрыть окно"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
         menu.addItem(fileItem)
         NSApp.mainMenu = menu

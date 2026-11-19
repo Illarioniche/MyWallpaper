@@ -152,7 +152,9 @@ struct PowerPlaybackModelTests {
         let domain = "PowerPlaybackModelTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: domain))
         defer { defaults.removePersistentDomain(forName: domain) }
-        try body(WallpaperPreferences(defaults: defaults))
+        let preferences = WallpaperPreferences(defaults: defaults)
+        preferences.language = .russian
+        try body(preferences)
     }
 }
 

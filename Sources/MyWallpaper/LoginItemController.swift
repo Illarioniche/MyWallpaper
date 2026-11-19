@@ -116,14 +116,21 @@ final class LoginItemController: ObservableObject {
     @Published private(set) var status: LoginItemStatus
     @Published private(set) var availability: LoginItemAvailability
     @Published private(set) var errorMessage: String?
+    @Published var localizer: AppLocalizer {
+        didSet { renderError() }
+    }
 
     private let service: any LoginItemServicing
     private var activationObserver: AnyCancellable?
+    private var errorKey: String?
+    private var errorDetail: String?
 
     init(service: (any LoginItemServicing)? = nil,
-         notificationCenter: NotificationCenter = .default) {
+         notificationCenter: NotificationCenter = .default,
+         localizer: AppLocalizer = .russian) {
         let resolvedService = service ?? SystemLoginItemService()
         self.service = resolvedService
+        self.localizer = localizer
         availability = resolvedService.availability
         status = resolvedService.status
         activationObserver = notificationCenter.publisher(for: NSApplication.didBecomeActiveNotification)
@@ -137,6 +144,10 @@ final class LoginItemController: ObservableObject {
     }
 
     var statusDetail: String {
+        localizer.text(statusDetailKey)
+    }
+
+    private var statusDetailKey: String {
         if let explanation = availability.explanation { return explanation }
         switch status {
         case .enabled, .disabled:
@@ -154,21 +165,21 @@ final class LoginItemController: ObservableObject {
     func refresh() {
         let currentAvailability = service.availability
         let currentStatus = service.status
-        if currentStatus != status || currentAvailability != availability { errorMessage = nil }
+        if currentStatus != status || currentAvailability != availability { setError(nil) }
         availability = currentAvailability
         status = currentStatus
     }
 
     func setEnabled(_ enabled: Bool) {
         refresh()
-        errorMessage = nil
+        setError(nil)
 
         guard availability == .available else {
-            errorMessage = availability.explanation
+            setError(availability.explanation)
             return
         }
         guard status != .unavailable else {
-            errorMessage = statusDetail
+            setError(statusDetailKey)
             return
         }
 
@@ -185,14 +196,29 @@ final class LoginItemController: ObservableObject {
             }
             status = service.status
             if enabled && status != .enabled && status != .requiresApproval {
-                errorMessage = "macOS пока не подтвердила автозапуск. Повтори попытку или добавь MyWallpaper в объекты входа вручную."
+                setError("macOS пока не подтвердила автозапуск. Повтори попытку или добавь MyWallpaper в объекты входа вручную.")
             }
         } catch {
             // An operation can fail after the system state has changed. Never infer
             // the checkbox state from the requested value or from a cached preference.
             status = service.status
-            let action = enabled ? "включить" : "выключить"
-            errorMessage = "Не удалось \(action) автозапуск. \(error.localizedDescription)"
+            let key = enabled ? "Не удалось включить автозапуск. %@" : "Не удалось выключить автозапуск. %@"
+            setError(key, detail: error.localizedDescription)
+        }
+    }
+
+    private func setError(_ key: String?, detail: String? = nil) {
+        errorKey = key
+        errorDetail = detail
+        renderError()
+    }
+
+    private func renderError() {
+        guard let errorKey else { errorMessage = nil; return }
+        if let errorDetail {
+            errorMessage = localizer.format(errorKey, errorDetail)
+        } else {
+            errorMessage = localizer.text(errorKey)
         }
     }
 

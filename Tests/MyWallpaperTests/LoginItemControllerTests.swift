@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CoreServices
 import ServiceManagement
 import Testing
@@ -7,6 +8,52 @@ import Testing
 @Suite
 @MainActor
 struct LoginItemControllerTests {
+    @Test
+    func changingLanguageRepublishesAnExistingFailureWithoutRepeatingRegistration() throws {
+        let service = FakeLoginItemService(status: .disabled)
+        service.registerError = LocalizationLoginFailure()
+        let controller = LoginItemController(service: service)
+        controller.setEnabled(true)
+        let russian = try #require(controller.errorMessage)
+        var published: [String?] = []
+        let subscription = controller.$errorMessage.sink { published.append($0) }
+        defer { subscription.cancel() }
+
+        let english = AppLocalizer(language: .english)
+        controller.localizer = english
+
+        let expected = english.format("Не удалось включить автозапуск. %@", "Permission 50% denied")
+        #expect(controller.errorMessage == expected)
+        #expect(controller.errorMessage != russian)
+        #expect(published.last == expected)
+        #expect(service.registerCalls == 1)
+        #expect(service.unregisterCalls == 0)
+        #expect(service.openSettingsCalls == 0)
+        #expect(controller.status == .disabled)
+        controller.localizer = .russian
+        #expect(controller.errorMessage == russian)
+    }
+
+    @Test
+    func locationExplanationAndStatusChangeLanguageWithoutServiceActions() {
+        let service = FakeLoginItemService(status: .notFound)
+        service.availability = .readOnlyVolume
+        let controller = LoginItemController(service: service)
+        controller.setEnabled(true)
+        let russian = controller.statusDetail
+        controller.localizer = AppLocalizer(language: .english)
+        #expect(controller.statusDetail != russian)
+        #expect(controller.errorMessage == controller.statusDetail)
+        #expect(service.registerCalls == 0)
+        #expect(service.unregisterCalls == 0)
+        #expect(service.openSettingsCalls == 0)
+
+        service.availability = .available
+        controller.refresh()
+        controller.localizer = .russian
+        #expect(controller.errorMessage == nil, "A language change must not revive a cleared error.")
+    }
+
     @Test(arguments: [LoginItemStatus.disabled, .enabled, .requiresApproval, .notFound, .unavailable])
     func initializationReadsSystemStatusWithoutRegistration(_ status: LoginItemStatus) {
         let service = FakeLoginItemService(status: status)
@@ -309,7 +356,7 @@ struct LoginItemControllerTests {
             #expect(model.errorMessage != nil)
 
             let playbackError = "Не удалось воспроизвести тестовый файл."
-            model.engine.onPlaybackError?(playbackError)
+            model.engine.onPlaybackError?(playbackError, nil)
             service.status = .enabled
             model.loginItems.refresh()
 
@@ -384,6 +431,7 @@ struct LoginItemControllerTests {
         let defaults = try #require(UserDefaults(suiteName: domain))
         defer { defaults.removePersistentDomain(forName: domain) }
         let preferences = WallpaperPreferences(defaults: defaults)
+        preferences.language = .russian
         preferences.restoreOnLaunch = false
         let loginItems = LoginItemController(service: service, notificationCenter: NotificationCenter())
         let model = WallpaperModel(preferences: preferences, loginItems: loginItems)
@@ -426,4 +474,8 @@ private final class FakeLoginItemService: LoginItemServicing {
 
 private enum TestFailure: Error {
     case denied
+}
+
+private struct LocalizationLoginFailure: LocalizedError {
+    var errorDescription: String? { "Permission 50% denied" }
 }
