@@ -232,7 +232,9 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
 
         // Cover only the usable desktop (the geometry of a normal maximized window),
         // leaving the menu bar and Dock outside the cover.
-        let fullCovers = screens.map { makeCover(frame: $0.visibleFrame) }
+        // A titled window with rounded/translucent system chrome is the actual
+        // regression: AppKit can keep reporting the desktop tracker as visible.
+        let fullCovers = screens.map { makeCover(frame: $0.visibleFrame, titled: true) }
         covers += fullCovers
         fullCovers.forEach { $0.orderFrontRegardless() }
         try await wait("pause under maximized opaque windows", timeout: 8) {
@@ -242,7 +244,10 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
             fullCovers[0].orderOut(nil)
             try await wait("independent playback on the uncovered display") {
                 model.isPlaying && !model.isPausedForOcclusion
+                    && model.occludedDisplayCount == screens.count - 1
             }
+            try require(model.status == "Воспроизведение: 1 из \(screens.count) экранов",
+                        "Mixed display playback must not claim that every wallpaper is playing.")
             for window in desktopWindows where window.frame != screens[0].frame {
                 try require(player(in: window)?.rate == 0, "Uncovering one screen resumed another covered screen.")
             }
@@ -429,8 +434,14 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func makeCover(frame: NSRect) -> NSWindow {
-        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+    private func makeCover(frame: NSRect, titled: Bool = false) -> NSWindow {
+        let style: NSWindow.StyleMask = titled
+            ? [.titled, .closable, .resizable, .fullSizeContentView] : .borderless
+        let window = NSWindow(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
+        if titled {
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+        }
         window.setFrame(frame, display: false)
         window.level = .normal
         window.isOpaque = true

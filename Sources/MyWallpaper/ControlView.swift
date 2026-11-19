@@ -365,6 +365,7 @@ private struct PowerSettingsPane: View {
                 SettingsToggle(title: "Пауза, когда рабочий стол скрыт",
                                detail: "Продолжать воспроизведение, когда обои снова видны.",
                                isOn: $model.pauseWhenCovered)
+                    .help("Проверяется каждый экран отдельно, примерно раз в секунду. Небольшие зазоры у краёв не учитываются.")
                 SettingsDivider()
                 SettingsToggle(title: "Пауза в режиме энергосбережения",
                                detail: "Учитывать режим энергосбережения macOS.",

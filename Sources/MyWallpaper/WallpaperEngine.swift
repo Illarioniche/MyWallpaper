@@ -8,6 +8,8 @@ final class WallpaperEngine: ObservableObject {
     @Published private(set) var hasWallpaper = false
     @Published private(set) var isPlaying = false
     @Published private(set) var isPausedForOcclusion = false
+    @Published private(set) var occludedDisplayCount = 0
+    @Published private(set) var displayCount = 0
 
     var onPlaybackError: ((String) -> Void)?
     private(set) var posterImage: CGImage?
@@ -22,6 +24,17 @@ final class WallpaperEngine: ObservableObject {
     private var playbackEnabled = false
     private var loadGeneration = 0
     private var surfaceGeneration = 0
+    private lazy var coverageMonitor: DesktopCoverageMonitor = {
+        let monitor = DesktopCoverageMonitor()
+        monitor.onChange = { [weak self] coverage in
+            guard let self, coverage.count == self.surfaces.count else { return }
+            for (surface, covered) in zip(self.surfaces, coverage) {
+                surface.setCoveredByWindows(covered)
+            }
+            self.refreshPlaybackState()
+        }
+        return monitor
+    }()
 
     func load(url: URL) async throws {
         loadGeneration += 1
@@ -71,6 +84,7 @@ final class WallpaperEngine: ObservableObject {
                 surface.configure(scaling: scaling, isMuted: isMuted || index != 0,
                                   pauseWhenCovered: pauseWhenCovered)
             }
+            updateCoverageMonitoring()
             refreshPlaybackState()
         }
     }
@@ -80,6 +94,7 @@ final class WallpaperEngine: ObservableObject {
         for surface in surfaces {
             surface.setPlaybackEnabled(enabled)
         }
+        updateCoverageMonitoring()
         refreshPlaybackState()
     }
 
@@ -145,20 +160,32 @@ final class WallpaperEngine: ObservableObject {
             surface.show()
             surface.setPlaybackEnabled(playbackEnabled)
         }
+        updateCoverageMonitoring()
         refreshPlaybackState()
     }
 
     private func disposeSurfaces() {
+        coverageMonitor.stop()
         for surface in surfaces { surface.dispose() }
         surfaces.removeAll()
         isPlaying = false
         isPausedForOcclusion = false
+        occludedDisplayCount = 0
+        displayCount = 0
+    }
+
+    private func updateCoverageMonitoring() {
+        coverageMonitor.update(trackingFrames: surfaces.map(\.trackingFrame),
+                               enabled: playbackEnabled && pauseWhenCovered && !surfaces.isEmpty)
     }
 
     private func refreshPlaybackState() {
         isPlaying = playbackEnabled && surfaces.contains(where: \.isPlaying)
+        displayCount = surfaces.count
+        occludedDisplayCount = playbackEnabled && pauseWhenCovered
+            ? surfaces.filter(\.isOccluded).count : 0
         isPausedForOcclusion = playbackEnabled && pauseWhenCovered && !surfaces.isEmpty
-            && surfaces.allSatisfy(\.isOccluded)
+            && occludedDisplayCount == surfaces.count
     }
 }
 
@@ -198,9 +225,11 @@ private final class WallpaperSurface {
     private var playbackEnabled = false
     private var pauseWhenCovered: Bool
     private var appliedPlaybackEnabled: Bool?
+    private var coveredByWindows = false
 
     var isPlaying: Bool { player.timeControlStatus == .playing }
-    var isOccluded: Bool { !visibilityWindow.occlusionState.contains(.visible) }
+    var isOccluded: Bool { coveredByWindows || !visibilityWindow.occlusionState.contains(.visible) }
+    var trackingFrame: CGRect { visibilityWindow.frame }
 
     init(
         asset: AVURLAsset,
@@ -247,10 +276,12 @@ private final class WallpaperSurface {
         // Track the usable desktop, excluding the menu bar and Dock. Observing
         // the full-screen video window would keep playback running behind a
         // maximized app whenever one of those narrow strips remained visible.
-        // Keep alphaValue at 1: the window itself participates in native
-        // occlusion, while its transparent content neither paints nor occludes
-        // the wallpaper. This requires no window enumeration or screen capture.
-        let trackingFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
+        // Native occlusion is supplemented with window bounds: on recent macOS,
+        // even a fully covering titled window can leave this tracker "visible".
+        // Ignore a narrow edge strip for rounded corners and window tiling gaps.
+        let usableFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
+        let edgeInset = min(16, min(usableFrame.width, usableFrame.height) / 4)
+        let trackingFrame = usableFrame.insetBy(dx: edgeInset, dy: edgeInset)
         visibilityWindow = DesktopWindow(
             contentRect: trackingFrame,
             styleMask: .borderless,
@@ -287,6 +318,12 @@ private final class WallpaperSurface {
 
     func setPlaybackEnabled(_ enabled: Bool) {
         playbackEnabled = enabled
+        applyPlaybackPolicy()
+    }
+
+    func setCoveredByWindows(_ covered: Bool) {
+        guard coveredByWindows != covered else { return }
+        coveredByWindows = covered
         applyPlaybackPolicy()
     }
 

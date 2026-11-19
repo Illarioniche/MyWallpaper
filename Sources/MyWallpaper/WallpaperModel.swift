@@ -22,6 +22,8 @@ final class WallpaperModel: ObservableObject {
     @Published private(set) var hasWallpaper = false
     @Published private(set) var isPlaying = false
     @Published private(set) var isPausedForOcclusion = false
+    @Published private(set) var occludedDisplayCount = 0
+    @Published private(set) var displayCount = 0
     @Published private(set) var userPaused: Bool
     @Published private(set) var pauseReason: String?
     @Published private(set) var powerSource: PowerSource
@@ -79,6 +81,9 @@ final class WallpaperModel: ObservableObject {
         if !hasWallpaper { return selectedURL == nil ? "Выбери своё настроение" : "Обои выключены" }
         if let pauseReason { return pauseReason }
         if isPausedForOcclusion { return "Пауза: рабочий стол скрыт" }
+        if isPlaying && occludedDisplayCount > 0 {
+            return "Воспроизведение: \(displayCount - occludedDisplayCount) из \(displayCount) экранов"
+        }
         return isPlaying ? "Обои воспроизводятся" : "Подготовка видео…"
     }
 
@@ -112,6 +117,8 @@ final class WallpaperModel: ObservableObject {
         engine.$hasWallpaper.assign(to: &$hasWallpaper)
         engine.$isPlaying.assign(to: &$isPlaying)
         engine.$isPausedForOcclusion.assign(to: &$isPausedForOcclusion)
+        engine.$occludedDisplayCount.assign(to: &$occludedDisplayCount)
+        engine.$displayCount.assign(to: &$displayCount)
         monitor.sourcePublisher
             .removeDuplicates()
             .sink { [weak self] source in

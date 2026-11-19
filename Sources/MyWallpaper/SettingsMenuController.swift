@@ -45,7 +45,7 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
               action: #selector(toggleBattery), to: menu)
         check("Пауза, когда рабочий стол скрыт", value: model.pauseWhenCovered,
               action: #selector(toggleCovered), to: menu)
-            .toolTip = "На каждом экране отдельно. Частично видимые обои продолжают воспроизводиться."
+            .toolTip = "На каждом экране отдельно. Проверка примерно раз в секунду; небольшие зазоры у краёв не учитываются."
         check("Пауза в режиме энергосбережения", value: model.pauseInLowPowerMode,
               action: #selector(toggleLowPower), to: menu)
         check("Без звука", value: model.isMuted, action: #selector(toggleMute), to: menu)
