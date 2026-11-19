@@ -90,6 +90,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         }
         try await capture(model, to: output.appendingPathComponent("loaded.png"))
         print("PASS: real video advances, thumbnail is ready, all screen windows are interactive-safe")
+        try await checkScreenChangesAndMinimization(model)
 
         model.togglePlayback()
         try await wait("manual pause") { !model.isPlaying }
@@ -165,6 +166,90 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
     /// Includes any non-interactive visibility tracking windows, but only in this test process.
     private var wallpaperWindows: [NSWindow] {
         NSApp.windows.filter { $0.isVisible && $0.level.rawValue < NSWindow.Level.normal.rawValue }
+    }
+
+    private func checkScreenChangesAndMinimization(_ model: WallpaperModel) async throws {
+        model.togglePlayback()
+        try await wait("pause before screen-change regression") { !model.isPlaying }
+        let windows = desktopWindows
+        let windowIDs = Set(wallpaperWindows.map(ObjectIdentifier.init))
+        var snapshots: [(window: NSWindow, player: AVPlayer, item: AVPlayerItem, position: Double)] = []
+        for window in windows {
+            guard let player = player(in: window), let item = player.currentItem else {
+                throw SmokeFailure(message: "Missing player before screen-change regression.")
+            }
+            let duration = try await item.asset.load(.duration)
+            // A position inside the supplied clip detects a reset without requiring
+            // a long fixture or confusing a normal loop boundary with a restart.
+            let finished = await player.seek(to: CMTimeMultiplyByFloat64(duration, multiplier: 0.5),
+                                             toleranceBefore: .zero, toleranceAfter: .zero)
+            try require(finished, "Could not seek before screen-change regression.")
+            snapshots.append((window, player, item, player.currentTime().seconds))
+        }
+
+        func checkPreserved(_ description: String, paused: Bool) throws {
+            try require(Set(wallpaperWindows.map(ObjectIdentifier.init)) == windowIDs,
+                        "Wallpaper windows were replaced during \(description).")
+            for snapshot in snapshots {
+                try require(player(in: snapshot.window) === snapshot.player,
+                            "Wallpaper player was replaced during \(description).")
+                try require(snapshot.player.isMuted, "Screen changes unexpectedly enabled audio.")
+                if paused {
+                    try require(snapshot.player.currentItem === snapshot.item
+                                && snapshot.position.isFinite
+                                && abs(snapshot.player.currentTime().seconds - snapshot.position) < 0.025,
+                                "Paused playback position was reset during \(description).")
+                    try require(snapshot.player.rate == 0 && model.userPaused && !model.isPlaying,
+                                "Manual pause was lost during \(description).")
+                }
+            }
+        }
+
+        for _ in 0..<3 {
+            NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApp)
+            try await settle()
+            try checkPreserved("repeated screen notifications", paused: true)
+        }
+
+        let screen = NSScreen.screens[0]
+        let control = NSWindow(
+            contentRect: NSRect(x: screen.visibleFrame.minX + 24, y: screen.visibleFrame.maxY - 200,
+                                width: 280, height: 160),
+            styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false
+        )
+        control.title = "MyWallpaper — проверка сворачивания"
+        control.isReleasedWhenClosed = false
+        control.ignoresMouseEvents = true
+        defer { control.orderOut(nil); control.close() }
+        control.orderFrontRegardless()
+
+        for paused in [true, false] {
+            if !paused {
+                model.togglePlayback()
+                try await wait("resume before minimizing") { model.isPlaying }
+                NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApp)
+                try await settle()
+                try checkPreserved("screen notification while playing", paused: false)
+            }
+            control.performMiniaturize(nil)
+            try await wait("native window minimization", timeout: 5) { control.isMiniaturized }
+            try await settle()
+            try checkPreserved("native window minimization", paused: paused)
+
+            control.deminiaturize(nil)
+            try await wait("native window restoration", timeout: 5) { !control.isMiniaturized && control.isVisible }
+            try await settle()
+            try checkPreserved("native window restoration", paused: paused)
+        }
+
+        let resumedPlayer = snapshots[0].player
+        let time = resumedPlayer.currentTime()
+        let item = resumedPlayer.currentItem
+        try await wait("continued playback after restoring the window", timeout: 5) {
+            resumedPlayer.currentItem !== item || CMTimeCompare(resumedPlayer.currentTime(), time) != 0
+        }
+        try require(model.isPlaying, "Restoring a window stopped active playback.")
+        print("PASS: screen notifications and native minimize/restore preserve players, position and manual pause")
     }
 
     private func checkOcclusion(_ model: WallpaperModel) async throws {
