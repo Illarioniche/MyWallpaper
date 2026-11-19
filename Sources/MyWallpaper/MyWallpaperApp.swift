@@ -6,6 +6,7 @@ enum MyWallpaperApp {
     @MainActor
     static func main() {
         let app = NSApplication.shared
+        app.applicationIconImage = AppIconArtwork.image(size: 512)
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
@@ -33,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.onError = { [weak self] in self?.showWindow() }
         settings.onOpenSettings = { [weak self] in self?.showSettings() }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "play.rectangle", accessibilityDescription: "MyWallpaper")
+        item.button?.image = AppIconArtwork.menuBarImage()
         item.button?.toolTip = "MyWallpaper — живые обои"
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -88,14 +89,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showWindow() {
         if controlWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 720),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 760),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
             window.title = "MyWallpaper"
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.isReleasedWhenClosed = false
-            window.contentMinSize = NSSize(width: 820, height: 604)
+            window.contentMinSize = NSSize(width: 820, height: 640)
             window.backgroundColor = .windowBackgroundColor
             window.contentView = NSHostingView(rootView: ControlView(model: model, navigation: navigation)
                 .padding(.top, 24).background(Color(nsColor: .windowBackgroundColor)))

@@ -15,7 +15,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .wallpaper: return "photo.on.rectangle"
         case .general: return "gearshape.fill"
-        case .power: return "battery.100percent"
+        case .power: return "battery.100"
         }
     }
     var color: Color {

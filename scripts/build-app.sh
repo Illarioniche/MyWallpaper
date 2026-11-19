@@ -35,7 +35,13 @@ chmod +x "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
 mv -f "$APP_PATH/Contents/MacOS/.MyWallpaper.new" "$APP_PATH/Contents/MacOS/MyWallpaper"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 
-xcrun swift "$PROJECT_ROOT/scripts/generate-icon.swift" "$BUILD_ROOT/MyWallpaper.iconset" "$APP_PATH/Contents/Resources/AppIcon.icns"
+xcrun swiftc -parse-as-library -swift-version 6 \
+    -module-cache-path "$BUILD_ROOT/ModuleCache" \
+    "$PROJECT_ROOT/Sources/MyWallpaper/AppIconArtwork.swift" \
+    "$PROJECT_ROOT/scripts/generate-icon.swift" \
+    -o "$BUILD_ROOT/generate-icon"
+"$BUILD_ROOT/generate-icon" "$BUILD_ROOT/MyWallpaper.iconset" \
+    "$APP_PATH/Contents/Resources/AppIcon.icns" "$BUILD_ROOT/app-icon-preview1024.png"
 
 /usr/bin/codesign --force --sign - "$APP_PATH"
 /usr/bin/codesign --verify --strict "$APP_PATH"

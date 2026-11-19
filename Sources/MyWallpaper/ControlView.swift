@@ -4,6 +4,7 @@ import SwiftUI
 struct ControlView: View {
     @ObservedObject var model: WallpaperModel
     @ObservedObject var navigation: AppNavigation
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var dropTargeted = false
 
     init(model: WallpaperModel, navigation: AppNavigation = AppNavigation()) {
@@ -13,12 +14,12 @@ struct ControlView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 200)
+            sidebar.frame(width: 212)
             Divider()
             VStack(spacing: 0) {
                 pageHeader
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 22) {
                         if let error = model.errorMessage { errorBanner(error) }
                         switch navigation.section {
                         case .wallpaper: WallpaperSettingsPane(model: model)
@@ -26,23 +27,23 @@ struct ControlView: View {
                         case .power: PowerSettingsPane(model: model)
                         }
                     }
-                    .frame(maxWidth: 740, alignment: .leading)
+                    .frame(maxWidth: 720, alignment: .leading)
                     .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 24)
+                    .padding(.top, 4)
+                    .padding(.bottom, 28)
                     .frame(maxWidth: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(AppColors.canvas)
         }
-        .frame(minWidth: 820, idealWidth: 920, maxWidth: .infinity,
-               minHeight: 550, idealHeight: 650, maxHeight: .infinity)
+        .frame(minWidth: 820, idealWidth: 980, maxWidth: .infinity,
+               minHeight: 600, idealHeight: 736, maxHeight: .infinity)
         .overlay {
             if dropTargeted {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 16)
                     .strokeBorder(Color.accentColor, lineWidth: 3)
-                    .padding(3)
+                    .padding(5)
                     .allowsHitTesting(false)
             }
         }
@@ -56,27 +57,35 @@ struct ControlView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                SettingsIcon(symbol: "play.rectangle.fill", color: .teal, size: 34)
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 9) {
+                AppBrandIcon(size: 46)
+                VStack(alignment: .leading, spacing: 4) {
                     Text("MyWallpaper").font(.system(size: 14, weight: .semibold))
-                    Text("Живые обои").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("Живые обои для Mac")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 15)
             .padding(.top, 22)
-            .padding(.bottom, 20)
+            .padding(.bottom, 28)
+
+            Text("Настройки")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 22)
+                .padding(.bottom, 8)
 
             List(selection: Binding<AppSection?>(
                 get: { navigation.section },
                 set: { if let section = $0 { navigation.section = section } }
             )) {
                 ForEach(AppSection.allCases) { section in
-                    HStack(spacing: 10) {
-                        SettingsIcon(symbol: section.symbol, color: section.color)
-                        Text(section.title).font(.system(size: 13))
+                    HStack(spacing: 11) {
+                        SettingsIcon(symbol: section.symbol, color: section.color, size: 28)
+                        Text(section.title).font(.system(size: 13, weight: .medium))
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     .tag(section)
                     .accessibilityLabel(section.title)
                 }
@@ -85,32 +94,47 @@ struct ControlView: View {
             .scrollContentBackground(.hidden)
             .padding(.horizontal, 5)
 
-            Divider().padding(.horizontal, 16)
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 7) {
-                    Circle()
-                        .fill(model.isPlaying ? Color.green : Color.secondary)
-                        .frame(width: 6, height: 6)
-                        .padding(.top, 4)
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: statusSymbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(model.isPlaying ? Color.teal : Color.secondary)
+                        .frame(width: 16, height: 16)
+                        .accessibilityHidden(true)
                     Text(model.status)
                         .font(.system(size: 11, weight: .medium))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Приложение остаётся в строке меню, когда окно закрыто.")
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AppColors.statusBackground, in: RoundedRectangle(cornerRadius: 11))
+                .accessibilityElement(children: .combine)
+
+                Label("Всегда под рукой в строке меню", systemImage: "menubar.rectangle")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 3)
             }
-            .padding(18)
+            .padding(16)
         }
-        .background(.regularMaterial)
+        .background {
+            if reduceTransparency { Color(nsColor: .windowBackgroundColor) }
+            else { Rectangle().fill(.regularMaterial) }
+        }
+    }
+
+    private var statusSymbol: String {
+        if model.isLoading { return "hourglass" }
+        if model.isPlaying { return "play.circle.fill" }
+        return model.hasWallpaper ? "pause.circle.fill" : "circle.dotted"
     }
 
     private var pageHeader: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(navigation.section.title)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 24, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
                 Text(navigation.section.subtitle)
                     .font(.system(size: 12))
@@ -118,30 +142,36 @@ struct ControlView: View {
             }
             Spacer(minLength: 10)
             if navigation.section == .wallpaper {
-                Button("Выбрать видео…", action: model.chooseVideo)
-                    .keyboardShortcut("o", modifiers: .command)
+                Button(action: model.chooseVideo) {
+                    Label("Выбрать видео", systemImage: "plus")
+                }
+                .controlSize(.large)
+                .keyboardShortcut("o", modifiers: .command)
             }
         }
-        .padding(.horizontal, 26)
+        .padding(.horizontal, 24)
         .padding(.top, 22)
         .padding(.bottom, 18)
     }
 
     private func errorBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                .padding(.top, 4)
             Text(message)
                 .font(.system(size: 12))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            Button { model.errorMessage = nil } label: { Image(systemName: "xmark") }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Закрыть сообщение")
+            Button { model.errorMessage = nil } label: {
+                Image(systemName: "xmark").frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Закрыть сообщение")
         }
-        .padding(13)
-        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .padding(14)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .contain)
     }
 }
@@ -153,68 +183,106 @@ private struct WallpaperSettingsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsCard {
-                preview.frame(height: 270)
-                Divider()
-                HStack(spacing: 10) {
-                    Image(systemName: "film")
-                        .font(.system(size: 19))
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(model.selectedURL?.lastPathComponent ?? "Видео не выбрано")
-                            .font(.system(size: 13, weight: .medium))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text(model.selectedURL == nil ? "MP4, MOV и другие форматы macOS" : "Текущие обои")
-                            .font(.system(size: 11))
+                preview
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .frame(maxWidth: 560)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(model.thumbnail == nil ? 0.04 : 0.17), radius: 16, y: 7)
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.previewSurround)
+
+                if model.selectedURL != nil {
+                    Divider()
+                    HStack(spacing: 12) {
+                        RowIcon(symbol: "film", color: .teal)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(model.selectedURL?.lastPathComponent ?? "Видео")
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            HStack(spacing: 6) {
+                                Text(model.selectedURL?.pathExtension.uppercased() ?? "Видео")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(AppColors.statusBackground, in: RoundedRectangle(cornerRadius: 4))
+                                Text("Текущие обои").font(.system(size: 11))
+                            }
                             .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Button(action: model.revealVideo) {
+                            Image(systemName: "folder").frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Показать видео в Finder")
+                        .accessibilityLabel("Показать видео в Finder")
                     }
-                    Spacer(minLength: 8)
-                    if model.selectedURL != nil {
-                        Button(action: model.revealVideo) { Image(systemName: "folder") }
-                            .buttonStyle(.borderless)
-                            .help("Показать видео в Finder")
-                            .accessibilityLabel("Показать видео в Finder")
-                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .help(model.selectedURL?.path ?? "")
                 }
-                .padding(14)
-                .help(model.selectedURL?.path ?? "Выбери локальный видеофайл")
-            }
 
-            HStack(spacing: 10) {
-                Button(action: model.togglePlayback) {
-                    Label(model.playbackButtonTitle, systemImage: model.playbackButtonSymbol)
-                        .frame(minWidth: 100)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(model.isLoading || model.selectedURL == nil)
-                Button("Выключить", action: model.stop)
-                    .controlSize(.large)
-                    .disabled(!model.hasWallpaper && !model.isLoading)
-                    .help("Вернуть обычные обои macOS")
-                Spacer(minLength: 8)
-                Label(model.isMuted ? "Без звука" : "Со звуком",
-                      systemImage: model.isMuted ? "speaker.slash" : "speaker.wave.2")
-                    .font(.system(size: 11))
+                if model.selectedURL != nil || model.isLoading {
+                    Divider().padding(.horizontal, 16)
+                    HStack(spacing: 10) {
+                        Button(action: model.togglePlayback) {
+                            Label(model.playbackButtonTitle, systemImage: model.playbackButtonSymbol)
+                                .frame(minWidth: 94)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(model.isLoading)
+                        Button(action: model.stop) {
+                            Label("Выключить", systemImage: "stop.fill")
+                        }
+                        .controlSize(.large)
+                        .disabled(!model.hasWallpaper && !model.isLoading)
+                        .help("Вернуть обычные обои macOS")
+                        Spacer(minLength: 4)
+                        Image(systemName: model.isMuted ? "speaker.slash" : "speaker.wave.2")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .help(model.isMuted ? "Звук выключен" : "Звук включён")
+                            .accessibilityLabel(model.isMuted ? "Без звука" : "Со звуком")
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                } else {
+                    HStack {
+                        Label("MP4, MOV и другие форматы", systemImage: "film")
+                        Spacer()
+                        Label("Видео с этого Mac", systemImage: "folder")
+                    }
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
+                    .padding(16)
+                }
             }
 
-            SettingsCard {
-                SettingsRow(title: "Экран") {
+            SettingsGroup(title: "Оформление") {
+                SettingsRow(title: "Экран", symbol: "display.2", color: .blue) {
                     Picker("Экран", selection: $model.target) {
                         ForEach(DisplayTarget.allCases) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 180)
+                    .frame(width: 170)
                 }
                 SettingsDivider()
-                SettingsRow(title: "Масштаб", detail: "Заполнить экран или показать весь кадр.") {
+                SettingsRow(title: "Масштаб", detail: "Как видео располагается на экране.",
+                            symbol: "arrow.up.left.and.arrow.down.right", color: .purple) {
                     Picker("Масштаб", selection: $model.scaling) {
                         ForEach(VideoScaling.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 190)
+                    .frame(width: 176)
                 }
             }
         }
@@ -230,30 +298,31 @@ private struct WallpaperSettingsPane: View {
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .background(.black)
                 } else {
-                    LinearGradient(colors: [Color.accentColor.opacity(0.07), Color.accentColor.opacity(0.015)],
+                    LinearGradient(colors: [Color.teal.opacity(0.10), Color.blue.opacity(0.035)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
-                    VStack(spacing: 10) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 38, weight: .light))
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.bottom, 3)
-                        Text(model.selectedURL == nil ? "Видео для рабочего стола" : "Предпросмотр видео")
-                            .font(.system(size: 16, weight: .medium))
+                    VStack(spacing: 9) {
+                        AppBrandIcon(size: 68).padding(.bottom, 4)
+                        Text(model.selectedURL == nil ? "Рабочий стол с характером" : "Предпросмотр видео")
+                            .font(.system(size: 17, weight: .semibold))
                         if model.selectedURL == nil {
-                            Text("Перетащи MP4 или MOV в это окно")
+                            Text("Перетащи любимое видео в это окно")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
-                            Button("Выбрать файл…", action: model.chooseVideo)
-                                .padding(.top, 5)
+                            Button(action: model.chooseVideo) {
+                                Label("Выбрать видео", systemImage: "plus")
+                            }
+                            .controlSize(.large)
+                            .padding(.top, 7)
                         }
                     }
+                    .padding(20)
                 }
                 if model.isLoading {
-                    Color(nsColor: .windowBackgroundColor).opacity(0.65)
+                    Color(nsColor: .windowBackgroundColor).opacity(0.75)
                     ProgressView("Открываем видео…")
                         .font(.system(size: 12))
-                        .padding(18)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(20)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -270,24 +339,38 @@ private struct GeneralSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            SettingsGroup(title: "Запуск") {
+            SettingsIntro(symbol: "slider.horizontal.3", color: .blue,
+                          title: "Устроено под тебя",
+                          detail: "Пара настроек — и любимые обои всегда на месте.")
+            SettingsGroup(title: "Запуск приложения") {
                 LoginSettingsRow(model: model, loginItems: model.loginItems)
                 SettingsDivider()
                 SettingsToggle(title: "Восстанавливать обои при запуске",
-                               detail: "Открывать последнее видео и сохранять выбранный режим воспроизведения.",
+                               detail: "Открывать последнее видео в выбранном режиме.",
+                               symbol: "arrow.counterclockwise", color: .blue,
                                isOn: $model.restoreOnLaunch)
             }
-            SettingsGroup(title: "Воспроизведение") {
-                SettingsToggle(title: "Без звука", detail: "Отключить аудиодорожку видео.", isOn: $model.isMuted)
+            SettingsGroup(title: "Звук") {
+                SettingsToggle(title: "Без звука", detail: "Отключить аудиодорожку видео.",
+                               symbol: "speaker.slash.fill", color: .purple, isOn: $model.isMuted)
             }
-            HStack(alignment: .top, spacing: 9) {
-                Image(systemName: "menubar.rectangle").font(.system(size: 15))
-                Text("После закрытия окна MyWallpaper остаётся в строке меню. Оттуда можно открыть настройки, поставить обои на паузу или завершить приложение.")
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "menubar.rectangle")
+                    .font(.system(size: 19, weight: .light))
+                    .foregroundStyle(.teal)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Закрой окно — обои останутся")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("Управление всегда доступно в строке меню: пауза, выбор видео и настройки.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.teal.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 }
@@ -302,7 +385,8 @@ private struct LoginSettingsRow: View {
             SettingsToggle(title: "Запускать при входе в macOS",
                            detail: loginItems.status == .unavailable
                                ? "Доступно из собранного приложения MyWallpaper.app."
-                               : "Открывать приложение в строке меню без лишних окон.",
+                               : "Открывать в строке меню без лишних окон.",
+                           symbol: "power", color: .teal,
                            isOn: Binding(get: { loginItems.status == .enabled },
                                          set: { value in model.setLaunchAtLogin(value) }))
                 .disabled(loginItems.status == .unavailable || loginItems.status == .requiresApproval)
@@ -316,8 +400,8 @@ private struct LoginSettingsRow: View {
                     Button("Разрешить…", action: loginItems.openSystemSettings)
                 }
                 .controlSize(.small)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
             }
         }
         .onAppear { loginItems.refresh() }
@@ -331,44 +415,49 @@ private struct PowerSettingsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsCard {
-                HStack(spacing: 12) {
-                    SettingsIcon(symbol: sourceSymbol, color: sourceColor, size: 34)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(sourceTitle).font(.system(size: 13, weight: .semibold))
-                        Text("Режим меняется автоматически при смене источника питания.")
-                            .font(.system(size: 11))
+                HStack(spacing: 15) {
+                    SettingsIcon(symbol: sourceSymbol, color: sourceColor, size: 44)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(sourceTitle).font(.system(size: 15, weight: .semibold))
+                        Text("MyWallpaper учитывает источник питания автоматически.")
+                            .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(15)
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(sourceColor.opacity(0.045))
             }
-
-            SettingsGroup(title: "По источнику питания") {
+            SettingsGroup(title: "Режим воспроизведения") {
                 SettingsToggle(title: "Живые обои от сети",
-                               detail: "Воспроизводить видео при подключённом питании.",
+                               detail: "Анимация при подключённом питании.",
+                               symbol: "powerplug.fill", color: .teal,
                                isOn: $model.animateOnExternalPower)
                 SettingsDivider()
                 SettingsToggle(title: "Живые обои от батареи",
-                               detail: "Воспроизводить видео, когда Mac работает от аккумулятора.",
+                               detail: "Анимация при работе от аккумулятора.",
+                               symbol: "battery.100", color: .orange,
                                isOn: $model.animateOnBattery)
             }
-            Text("Если режим выключен, на рабочем столе остаётся неподвижный кадр. Настройки для сети и батареи можно менять независимо.")
+            Text("При выключенном режиме на рабочем столе остаётся неподвижный кадр.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-                .padding(.top, -12)
+                .padding(.horizontal, 4)
+                .padding(.top, -10)
 
             SettingsGroup(title: "Экономия энергии") {
                 SettingsToggle(title: "Пауза, когда рабочий стол скрыт",
-                               detail: "Продолжать воспроизведение, когда обои снова видны.",
+                               detail: "Продолжать, когда обои снова видны.",
+                               symbol: "rectangle.on.rectangle.slash", color: .blue,
                                isOn: $model.pauseWhenCovered)
                     .help("Проверяется каждый экран отдельно, примерно раз в секунду. Небольшие зазоры у краёв не учитываются.")
                 SettingsDivider()
                 SettingsToggle(title: "Пауза в режиме энергосбережения",
                                detail: "Учитывать режим энергосбережения macOS.",
+                               symbol: "leaf.fill", color: .green,
                                isOn: $model.pauseInLowPowerMode)
             }
         }
@@ -376,56 +465,120 @@ private struct PowerSettingsPane: View {
 
     private var sourceTitle: String {
         switch model.powerSource {
-        case .external: return "Сейчас: питание от сети"
-        case .battery: return "Сейчас: питание от батареи"
+        case .external: return "Сейчас — питание от сети"
+        case .battery: return "Сейчас — питание от батареи"
         case .unknown: return "Источник питания не определён"
         }
     }
-
     private var sourceSymbol: String {
         switch model.powerSource {
         case .external: return "powerplug.fill"
-        case .battery: return "battery.100percent"
+        case .battery: return "battery.100"
         case .unknown: return "questionmark"
         }
     }
-
     private var sourceColor: Color {
         switch model.powerSource {
-        case .external: return .green
+        case .external: return .teal
         case .battery: return .orange
         case .unknown: return .gray
         }
     }
 }
 
+@MainActor
+private struct AppBrandIcon: View {
+    private static let artwork = AppIconArtwork.image(size: 128)
+    let size: CGFloat
+
+    var body: some View {
+        Image(nsImage: Self.artwork)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+private enum AppColors {
+    static var canvas: Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0.12, green: 0.13, blue: 0.15, alpha: 1)
+                : NSColor(srgbRed: 0.96, green: 0.97, blue: 0.98, alpha: 1)
+        })
+    }
+    static var previewSurround: Color { Color.primary.opacity(0.025) }
+    static var statusBackground: Color { Color.primary.opacity(0.045) }
+}
+
+private struct SettingsIntro: View {
+    let symbol: String
+    let color: Color
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 15) {
+            SettingsIcon(symbol: symbol, color: color, size: 44)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.system(size: 15, weight: .semibold))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
 private struct SettingsIcon: View {
     let symbol: String
     let color: Color
-    var size: CGFloat = 26
+    var size: CGFloat = 28
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: size * 0.54, weight: .medium))
+            .font(.system(size: size * 0.50, weight: .medium))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(color.gradient, in: RoundedRectangle(cornerRadius: size * 0.23))
+            .background(color.gradient, in: RoundedRectangle(cornerRadius: size * 0.25))
+            .overlay {
+                RoundedRectangle(cornerRadius: size * 0.25)
+                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+private struct RowIcon: View {
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(color)
+            .frame(width: 32, height: 32)
+            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
             .accessibilityHidden(true)
     }
 }
 
 private struct SettingsCard<Content: View>: View {
+    @Environment(\.colorSchemeContrast) private var contrast
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(spacing: 0) { content }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: contrast == .increased ? 1 : 0.5)
             }
+            .shadow(color: .black.opacity(contrast == .increased ? 0 : 0.025), radius: 4, y: 2)
     }
 }
 
@@ -434,11 +587,11 @@ private struct SettingsGroup<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 9) {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .padding(.leading, 12)
+                .padding(.leading, 4)
                 .accessibilityAddTraits(.isHeader)
             SettingsCard { content }
         }
@@ -448,29 +601,39 @@ private struct SettingsGroup<Content: View>: View {
 private struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String? = nil
+    let symbol: String
+    let color: Color
     @ViewBuilder var control: Control
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 12) {
+            RowIcon(symbol: symbol, color: color)
             SettingsLabel(title: title, detail: detail)
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
             control
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 }
 
 private struct SettingsToggle: View {
     let title: String
     var detail: String? = nil
+    let symbol: String
+    let color: Color
     @Binding var isOn: Bool
 
     var body: some View {
-        Toggle(isOn: $isOn) { SettingsLabel(title: title, detail: detail) }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .padding(14)
+        Toggle(isOn: $isOn) {
+            HStack(spacing: 12) {
+                RowIcon(symbol: symbol, color: color)
+                SettingsLabel(title: title, detail: detail)
+            }
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .padding(16)
     }
 }
 
@@ -479,7 +642,7 @@ private struct SettingsLabel: View {
     let detail: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.system(size: 13))
             if let detail {
                 Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -491,5 +654,5 @@ private struct SettingsLabel: View {
 }
 
 private struct SettingsDivider: View {
-    var body: some View { Divider().padding(.horizontal, 14) }
+    var body: some View { Divider().padding(.leading, 60).padding(.trailing, 16) }
 }

@@ -52,42 +52,71 @@ enum RenderUI {
         }
         guard !model.hasWallpaper else { throw PreviewFailure(message: "UI preview unexpectedly enabled wallpaper.") }
 
-        let navigation = AppNavigation()
-        for (theme, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
-            for section in ["wallpaper", "general", "power"] {
-                switch section {
-                case "general": navigation.section = .general
-                case "power": navigation.section = .power
-                default: navigation.section = .wallpaper
+        // Keep the empty state independent of the optional video thumbnail.
+        let emptyDomain = "MyWallpaperUIEmptyPreview.\(UUID().uuidString)"
+        guard let emptyDefaults = UserDefaults(suiteName: emptyDomain) else {
+            throw PreviewFailure(message: "Cannot create isolated empty-state preferences.")
+        }
+        let emptyPreferences = WallpaperPreferences(defaults: emptyDefaults)
+        emptyPreferences.restoreOnLaunch = false
+        emptyPreferences.wallpaperEnabled = false
+        let emptyLoginItems = LoginItemController(service: PreviewLoginService(), notificationCenter: NotificationCenter())
+        let emptyModel = WallpaperModel(preferences: emptyPreferences, loginItems: emptyLoginItems,
+                                        powerMonitor: PreviewPowerMonitor())
+        defer {
+            emptyModel.shutDown()
+            emptyDefaults.removePersistentDomain(forName: emptyDomain)
+        }
+
+        let sizes: [(suffix: String, size: NSSize)] = [
+            ("", NSSize(width: 980, height: 736)),
+            ("-compact", NSSize(width: 820, height: 616))
+        ]
+        for variant in sizes {
+            for (theme, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
+                for section in AppSection.allCases {
+                    let destination = output.appendingPathComponent("ui-\(section.rawValue)-\(theme)\(variant.suffix).png")
+                    try await capture(model, section: section, scheme: scheme,
+                                      size: variant.size, to: destination)
                 }
-                let bounds = NSRect(x: 0, y: 0, width: 940, height: 696)
-                let root = ControlView(model: model, navigation: navigation)
-                    .environment(\.colorScheme, scheme)
-                    .environment(\.controlActiveState, .active)
-                let hosting = NSHostingView(rootView: root)
-                hosting.frame = bounds
-                let window = NSWindow(contentRect: bounds, styleMask: .borderless, backing: .buffered, defer: false)
-                window.isReleasedWhenClosed = false
-                window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
-                window.contentView = hosting
-                defer { window.close() }
-                // Never order this window onscreen and never capture any display.
-                try await Task.sleep(for: .milliseconds(150))
-                hosting.layoutSubtreeIfNeeded()
-                hosting.displayIfNeeded()
-                guard !window.isVisible,
-                      let bitmap = hosting.bitmapImageRepForCachingDisplay(in: bounds) else {
-                    throw PreviewFailure(message: "Hidden-window bitmap rendering is unavailable.")
-                }
-                hosting.cacheDisplay(in: bounds, to: bitmap)
-                guard let png = bitmap.representation(using: .png, properties: [:]) else {
-                    throw PreviewFailure(message: "Cannot encode the hidden UI view.")
-                }
-                let destination = output.appendingPathComponent("ui-\(section)-\(theme).png")
-                try png.write(to: destination)
-                print(destination.path)
+                let emptyDestination = output.appendingPathComponent("ui-empty-\(theme)\(variant.suffix).png")
+                try await capture(emptyModel, section: .wallpaper, scheme: scheme,
+                                  size: variant.size, to: emptyDestination)
             }
         }
+    }
+
+    @MainActor
+    private static func capture(_ model: WallpaperModel, section: AppSection, scheme: ColorScheme,
+                                size: NSSize, to destination: URL) async throws {
+        guard !model.hasWallpaper else { throw PreviewFailure(message: "UI preview unexpectedly enabled wallpaper.") }
+        let navigation = AppNavigation()
+        navigation.section = section
+        let bounds = NSRect(origin: .zero, size: size)
+        let root = ControlView(model: model, navigation: navigation)
+            .environment(\.colorScheme, scheme)
+            .environment(\.controlActiveState, .active)
+        let hosting = NSHostingView(rootView: root)
+        hosting.frame = bounds
+        let window = NSWindow(contentRect: bounds, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        window.contentView = hosting
+        defer { window.close() }
+        // Never order this window onscreen and never capture any display.
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        guard !window.isVisible,
+              let bitmap = hosting.bitmapImageRepForCachingDisplay(in: bounds) else {
+            throw PreviewFailure(message: "Hidden-window bitmap rendering is unavailable.")
+        }
+        hosting.cacheDisplay(in: bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw PreviewFailure(message: "Cannot encode the hidden UI view.")
+        }
+        try png.write(to: destination)
+        print(destination.path)
     }
 }
 
