@@ -31,7 +31,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             do {
                 try await runChecks()
-                print("PASS: native playback, desktop windows, pause policy, invalid input, cancellation, settings, cleanup and UI rendering")
+                print("PASS: native playback, desktop windows, pause policy, occlusion, restoration, invalid input, cancellation, settings, cleanup and UI rendering")
                 exit(0)
             } catch {
                 print("FAIL: \(error.localizedDescription)")
@@ -53,7 +53,11 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
             throw SmokeFailure(message: "Unable to create isolated preferences.")
         }
         let model = WallpaperModel(preferences: WallpaperPreferences(defaults: defaults))
+        try require(model.pauseWhenCovered, "Smart pause should be enabled by default.")
         model.pauseInLowPowerMode = false
+        // Exercise ordinary playback independently of the user's currently open windows.
+        // Actual WindowServer occlusion is checked separately below.
+        model.pauseWhenCovered = false
         defer {
             model.shutDown()
             defaults.removePersistentDomain(forName: domain)
@@ -114,7 +118,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         await Task.yield()
         model.stop()
         try await settle()
-        try require(!model.hasWallpaper && !model.isLoading && desktopWindows.isEmpty,
+        try require(!model.hasWallpaper && !model.isLoading && wallpaperWindows.isEmpty,
                     "Stop during loading allowed stale playback/windows to return.")
         model.togglePlayback()
         try await wait("restart after stop") { model.hasWallpaper && model.isPlaying }
@@ -141,15 +145,188 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
             try require((window.contentView?.layer as? AVPlayerLayer)?.videoGravity == .resizeAspectFill,
                         "Fill scaling was not applied to every screen.")
         }
+        try await checkOcclusion(model)
         model.shutDown()
         try await settle()
-        try require(!model.hasWallpaper && !model.isPlaying && desktopWindows.isEmpty,
+        try require(!model.hasWallpaper && !model.isPlaying && wallpaperWindows.isEmpty,
                     "Shutdown left wallpaper windows or playback active.")
+        try await checkRestoration(video: video, defaults: defaults)
     }
 
     private var desktopWindows: [NSWindow] {
         let level = Int(CGWindowLevelForKey(.desktopWindow)) + 1
-        return NSApp.windows.filter { $0.isVisible && $0.level.rawValue == level }
+        return NSApp.windows.filter {
+            $0.isVisible && $0.level.rawValue == level && $0.contentView?.layer is AVPlayerLayer
+        }
+    }
+
+    /// Includes any non-interactive visibility tracking windows, but only in this test process.
+    private var wallpaperWindows: [NSWindow] {
+        NSApp.windows.filter { $0.isVisible && $0.level.rawValue < NSWindow.Level.normal.rawValue }
+    }
+
+    private func checkOcclusion(_ model: WallpaperModel) async throws {
+        let screens = NSScreen.screens
+        var covers: [NSWindow] = []
+        defer {
+            covers.forEach { $0.orderOut(nil); $0.close() }
+            model.pauseWhenCovered = false
+        }
+
+        // Another MyWallpaper process may be running. Reorder only this test's own
+        // surfaces within their existing levels; leave the user's app and settings alone.
+        for window in wallpaperWindows.sorted(by: { $0.level.rawValue < $1.level.rawValue }) {
+            window.orderFrontRegardless()
+        }
+        model.pauseWhenCovered = true
+        try await wait("uncovered test wallpaper (other apps must leave some desktop visible)", timeout: 8) {
+            model.isPlaying && !model.isPausedForOcclusion
+        }
+
+        // Neither partial window fills a screen. Their overlapping union does.
+        let leftCovers = screens.map { screen in
+            var frame = screen.visibleFrame
+            frame.size.width *= 0.6
+            return makeCover(frame: frame)
+        }
+        covers += leftCovers
+        leftCovers.forEach { $0.orderFrontRegardless() }
+        try await settle()
+        try require(model.isPlaying && !model.isPausedForOcclusion,
+                    "A partial cover paused every display; check for another fully covering app window.")
+
+        let rightCovers = screens.map { screen in
+            var frame = screen.visibleFrame
+            frame.origin.x += frame.width * 0.4
+            frame.size.width *= 0.6
+            return makeCover(frame: frame)
+        }
+        covers += rightCovers
+        rightCovers.forEach { $0.orderFrontRegardless() }
+        try await wait("pause under the union of overlapping opaque windows", timeout: 8) {
+            model.isPausedForOcclusion && !model.isPlaying
+        }
+        try require(desktopWindows.allSatisfy { self.player(in: $0)?.rate == 0 },
+                    "A covered display continues decoding/playing.")
+
+        model.pauseWhenCovered = false
+        try await wait("playback with smart pause disabled while still covered") {
+            model.isPlaying && !model.isPausedForOcclusion
+        }
+        model.pauseWhenCovered = true
+        try await wait("smart pause re-enabled while still covered") {
+            model.isPausedForOcclusion && !model.isPlaying
+        }
+
+        model.togglePlayback()
+        try require(model.userPaused, "Manual pause did not record the user's intent while covered.")
+        leftCovers.forEach { $0.orderOut(nil) }
+        rightCovers.forEach { $0.orderOut(nil) }
+        try await settle()
+        try require(!model.isPlaying && model.userPaused && !model.isPausedForOcclusion,
+                    "Uncovering a wallpaper undid manual pause or reported the wrong pause reason.")
+        model.togglePlayback()
+        try await wait("manual resume after uncovering") { model.isPlaying }
+
+        // Cover only the usable desktop (the geometry of a normal maximized window),
+        // leaving the menu bar and Dock outside the cover.
+        let fullCovers = screens.map { makeCover(frame: $0.visibleFrame) }
+        covers += fullCovers
+        fullCovers.forEach { $0.orderFrontRegardless() }
+        try await wait("pause under maximized opaque windows", timeout: 8) {
+            model.isPausedForOcclusion && !model.isPlaying
+        }
+        if screens.count > 1 {
+            fullCovers[0].orderOut(nil)
+            try await wait("independent playback on the uncovered display") {
+                model.isPlaying && !model.isPausedForOcclusion
+            }
+            for window in desktopWindows where window.frame != screens[0].frame {
+                try require(player(in: window)?.rate == 0, "Uncovering one screen resumed another covered screen.")
+            }
+        }
+        fullCovers.forEach { $0.orderOut(nil) }
+        try await wait("resume after removing all opaque covers") {
+            !model.isPausedForOcclusion && self.desktopWindows.allSatisfy {
+                self.player(in: $0)?.timeControlStatus == .playing
+            }
+        }
+        print("PASS: partial/combined/maximized covers, setting off and manual pause preservation (\(screens.count) display(s))")
+    }
+
+    private func checkRestoration(video: URL, defaults: UserDefaults) async throws {
+        let preferences = WallpaperPreferences(defaults: defaults)
+        try require(preferences.wallpaperEnabled && preferences.restoreOnLaunch,
+                    "Quitting should preserve the enabled wallpaper for the next launch.")
+
+        do {
+            let restored = WallpaperModel(preferences: preferences)
+            defer { restored.shutDown() }
+            restored.restore()
+            try await wait("automatic playback restored from the saved bookmark") {
+                restored.hasWallpaper && restored.isPlaying && restored.thumbnail != nil && !restored.isLoading
+            }
+            try require(restored.selectedURL?.standardizedFileURL == video,
+                        "Restoration selected a different video.")
+            try require(!restored.pauseWhenCovered, "Restoration lost the disabled smart-pause preference.")
+            restored.togglePlayback()
+            try await wait("pause before simulated quit") { !restored.isPlaying && restored.userPaused }
+        }
+        try require(wallpaperWindows.isEmpty, "A restored model left wallpaper windows on shutdown.")
+
+        do {
+            let paused = WallpaperModel(preferences: preferences)
+            defer { paused.shutDown() }
+            paused.restore()
+            try await wait("restore of a manually paused wallpaper") {
+                paused.hasWallpaper && paused.thumbnail != nil && !paused.isLoading
+            }
+            try require(paused.userPaused && !paused.isPlaying,
+                        "Restoration resumed a manually paused wallpaper.")
+            paused.stop()
+        }
+
+        do {
+            let stopped = WallpaperModel(preferences: preferences)
+            defer { stopped.shutDown() }
+            stopped.restore()
+            try await wait("remembered video after Stop") { stopped.thumbnail != nil }
+            try require(stopped.selectedURL?.standardizedFileURL == video && !stopped.hasWallpaper
+                        && !stopped.isPlaying && wallpaperWindows.isEmpty,
+                        "Restarting after Stop should remember the file without enabling it.")
+        }
+
+        preferences.wallpaperEnabled = true
+        preferences.userPaused = false
+        preferences.restoreOnLaunch = false
+        do {
+            let disabled = WallpaperModel(preferences: preferences)
+            defer { disabled.shutDown() }
+            disabled.restore()
+            try await wait("remembered video with launch restoration disabled") { disabled.thumbnail != nil }
+            try require(disabled.selectedURL?.standardizedFileURL == video && !disabled.hasWallpaper
+                        && !disabled.isPlaying && wallpaperWindows.isEmpty,
+                        "Disabling launch restoration still created a wallpaper.")
+        }
+        print("PASS: bookmark restore, preserved manual pause, stopped state and restoration disabled")
+    }
+
+    private func player(in window: NSWindow) -> AVPlayer? {
+        (window.contentView?.layer as? AVPlayerLayer)?.player
+    }
+
+    private func makeCover(frame: NSRect) -> NSWindow {
+        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.setFrame(frame, display: false)
+        window.level = .normal
+        window.isOpaque = true
+        window.backgroundColor = NSColor(calibratedWhite: 0.12, alpha: 1)
+        window.hasShadow = false
+        window.ignoresMouseEvents = true
+        window.animationBehavior = .none
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        window.isReleasedWhenClosed = false
+        return window
     }
 
     private func postWorkspace(_ name: Notification.Name) {
@@ -172,7 +349,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
     private func settle() async throws { try await Task.sleep(for: .milliseconds(300)) }
 
     private func capture(_ model: WallpaperModel, to url: URL) async throws {
-        let bounds = NSRect(x: 0, y: 0, width: 800, height: 720)
+        let bounds = NSRect(x: 0, y: 0, width: 800, height: 536)
         let hosting = NSHostingView(rootView: ControlView(model: model))
         hosting.frame = bounds
         let window = NSWindow(contentRect: bounds, styleMask: .borderless, backing: .buffered, defer: false)

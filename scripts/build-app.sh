@@ -28,9 +28,12 @@ swift build "${BUILD_OPTIONS[@]}" --product MyWallpaper
 BIN_PATH="$(swift build "${BUILD_OPTIONS[@]}" --show-bin-path)"
 
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
-cp "$BIN_PATH/MyWallpaper" "$APP_PATH/Contents/MacOS/MyWallpaper"
+# Replace the executable atomically so rebuilding does not truncate a running
+# copy's mapped binary. The running app keeps its old version until relaunched.
+cp "$BIN_PATH/MyWallpaper" "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
+chmod +x "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
+mv -f "$APP_PATH/Contents/MacOS/.MyWallpaper.new" "$APP_PATH/Contents/MacOS/MyWallpaper"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
-chmod +x "$APP_PATH/Contents/MacOS/MyWallpaper"
 
 xcrun swift "$PROJECT_ROOT/scripts/generate-icon.swift" "$BUILD_ROOT/MyWallpaper.iconset" "$APP_PATH/Contents/Resources/AppIcon.icns"
 

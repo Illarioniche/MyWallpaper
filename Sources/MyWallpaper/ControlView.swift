@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ControlView: View {
     @ObservedObject var model: WallpaperModel
+    var onOpenSettings: () -> Void = {}
     @State private var dropTargeted = false
     private let accent = Color(red: 0.48, green: 0.86, blue: 0.73)
 
@@ -11,10 +12,9 @@ struct ControlView: View {
             preview
             if let error = model.errorMessage { errorBanner(error) }
             controls
-            settings
             HStack(spacing: 7) {
                 Image(systemName: "menubar.rectangle")
-                Text("Закрой окно — обои продолжат работать. Управление остаётся в строке меню.")
+                Text("Обои работают и с закрытым окном. Параметры — в меню → Настройки.")
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
@@ -22,7 +22,7 @@ struct ControlView: View {
         }
         .padding(28)
         .frame(minWidth: 720, idealWidth: 800, maxWidth: .infinity,
-               minHeight: 660, idealHeight: 720, maxHeight: .infinity)
+               minHeight: 496, idealHeight: 536, maxHeight: .infinity)
         .background(Color(red: 0.065, green: 0.075, blue: 0.085))
         .preferredColorScheme(.dark)
         .tint(accent)
@@ -54,6 +54,12 @@ struct ControlView: View {
             }
             .padding(.horizontal, 11).padding(.vertical, 7)
             .background(.white.opacity(0.05), in: Capsule())
+            Button(action: onOpenSettings) {
+                Image(systemName: "gearshape").font(.system(size: 16))
+            }
+            .buttonStyle(.borderless)
+            .help("Настройки")
+            .accessibilityLabel("Открыть настройки")
         }
     }
 
@@ -167,52 +173,6 @@ struct ControlView: View {
                 .help("Выключить обои и вернуть обычный рабочий стол")
                 .accessibilityLabel("Выключить обои")
         }
-    }
-
-    private var settings: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 28) {
-                VStack(alignment: .leading, spacing: 9) {
-                    settingLabel("Экран", icon: "display")
-                    Picker("Экран", selection: $model.target) {
-                        ForEach(DisplayTarget.allCases) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden().pickerStyle(.segmented)
-                }
-                VStack(alignment: .leading, spacing: 9) {
-                    settingLabel("Масштаб", icon: "arrow.up.left.and.arrow.down.right")
-                    Picker("Масштаб", selection: $model.scaling) {
-                        ForEach(VideoScaling.allCases) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden().pickerStyle(.segmented)
-                    .help("Заполнить — обрезать края. Вместить — показать весь кадр с полями.")
-                }
-            }
-            .padding(18)
-            Divider().overlay(.white.opacity(0.03))
-            HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Toggle("Без звука", isOn: $model.isMuted)
-                    Toggle("Пауза в режиме энергосбережения", isOn: $model.pauseInLowPowerMode)
-                }
-                Spacer(minLength: 0)
-                VStack(alignment: .leading, spacing: 5) {
-                    Toggle("Восстанавливать при запуске", isOn: $model.restoreOnLaunch)
-                    Text("Запоминать видео и состояние обоев")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                        .padding(.leading, 20)
-                }
-            }
-            .font(.system(size: 11))
-            .toggleStyle(.checkbox)
-            .padding(18)
-        }
-        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.06)) }
-    }
-
-    private func settingLabel(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
     }
 
     private func errorBanner(_ message: String) -> some View {

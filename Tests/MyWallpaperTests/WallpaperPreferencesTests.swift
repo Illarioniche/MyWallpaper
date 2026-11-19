@@ -12,6 +12,7 @@ struct WallpaperPreferencesTests {
             #expect(preferences.scaling == .fill)
             #expect(preferences.isMuted)
             #expect(preferences.pauseInLowPowerMode)
+            #expect(preferences.pauseWhenCovered)
             #expect(preferences.restoreOnLaunch)
             #expect(!preferences.userPaused)
             #expect(!preferences.wallpaperEnabled)
@@ -27,6 +28,7 @@ struct WallpaperPreferencesTests {
             preferences.scaling = .fit
             preferences.isMuted = false
             preferences.pauseInLowPowerMode = false
+            preferences.pauseWhenCovered = false
             preferences.restoreOnLaunch = false
             preferences.userPaused = true
             preferences.wallpaperEnabled = true
@@ -38,6 +40,7 @@ struct WallpaperPreferencesTests {
             #expect(restored.scaling == .fit)
             #expect(!restored.isMuted, "An explicitly disabled setting must not fall back to true.")
             #expect(!restored.pauseInLowPowerMode)
+            #expect(!restored.pauseWhenCovered)
             #expect(!restored.restoreOnLaunch)
             #expect(restored.userPaused)
             #expect(restored.wallpaperEnabled)

@@ -7,6 +7,7 @@ import Combine
 final class WallpaperEngine: ObservableObject {
     @Published private(set) var hasWallpaper = false
     @Published private(set) var isPlaying = false
+    @Published private(set) var isPausedForOcclusion = false
 
     var onPlaybackError: ((String) -> Void)?
 
@@ -16,6 +17,7 @@ final class WallpaperEngine: ObservableObject {
     private var target: DisplayTarget = .all
     private var scaling: VideoScaling = .fill
     private var isMuted = true
+    private var pauseWhenCovered = true
     private var playbackEnabled = false
     private var loadGeneration = 0
     private var surfaceGeneration = 0
@@ -43,17 +45,21 @@ final class WallpaperEngine: ObservableObject {
         rebuildSurfaces()
     }
 
-    func configure(target: DisplayTarget, scaling: VideoScaling, isMuted: Bool) {
+    func configure(target: DisplayTarget, scaling: VideoScaling, isMuted: Bool,
+                   pauseWhenCovered: Bool = true) {
         let screensChanged = self.target != target
         self.target = target
         self.scaling = scaling
         self.isMuted = isMuted
+        self.pauseWhenCovered = pauseWhenCovered
         if screensChanged, asset != nil {
             rebuildSurfaces()
         } else {
             for (index, surface) in surfaces.enumerated() {
-                surface.configure(scaling: scaling, isMuted: isMuted || index != 0)
+                surface.configure(scaling: scaling, isMuted: isMuted || index != 0,
+                                  pauseWhenCovered: pauseWhenCovered)
             }
+            refreshPlaybackState()
         }
     }
 
@@ -110,6 +116,7 @@ final class WallpaperEngine: ObservableObject {
                 screen: screen,
                 scaling: scaling,
                 isMuted: isMuted || index != 0,
+                pauseWhenCovered: pauseWhenCovered,
                 onStateChanged: { [weak self] in
                     guard let self, self.surfaceGeneration == generation else { return }
                     self.refreshPlaybackState()
@@ -131,10 +138,13 @@ final class WallpaperEngine: ObservableObject {
         for surface in surfaces { surface.dispose() }
         surfaces.removeAll()
         isPlaying = false
+        isPausedForOcclusion = false
     }
 
     private func refreshPlaybackState() {
         isPlaying = playbackEnabled && surfaces.contains(where: \.isPlaying)
+        isPausedForOcclusion = playbackEnabled && pauseWhenCovered && !surfaces.isEmpty
+            && surfaces.allSatisfy(\.isOccluded)
     }
 }
 
@@ -161,27 +171,35 @@ private enum WallpaperError: LocalizedError {
 @MainActor
 private final class WallpaperSurface {
     private let window: DesktopWindow
+    private let visibilityWindow: DesktopWindow
     private let player: AVQueuePlayer
     private let looper: AVPlayerLooper
     private let videoView: WallpaperVideoView
     private var observations: [NSKeyValueObservation] = []
     private var currentItemObservation: NSKeyValueObservation?
+    private var occlusionObserver: NSObjectProtocol?
     private let onStateChanged: @MainActor () -> Void
     private let onFailure: @MainActor (String) -> Void
     private var disposed = false
+    private var playbackEnabled = false
+    private var pauseWhenCovered: Bool
+    private var appliedPlaybackEnabled: Bool?
 
     var isPlaying: Bool { player.timeControlStatus == .playing }
+    var isOccluded: Bool { !visibilityWindow.occlusionState.contains(.visible) }
 
     init(
         asset: AVURLAsset,
         screen: NSScreen,
         scaling: VideoScaling,
         isMuted: Bool,
+        pauseWhenCovered: Bool,
         onStateChanged: @escaping @MainActor () -> Void,
         onFailure: @escaping @MainActor (String) -> Void
     ) {
         self.onStateChanged = onStateChanged
         self.onFailure = onFailure
+        self.pauseWhenCovered = pauseWhenCovered
 
         player = AVQueuePlayer()
         player.isMuted = isMuted
@@ -209,18 +227,61 @@ private final class WallpaperSurface {
         window.canHide = false
         window.isReleasedWhenClosed = false
         window.contentView = videoView
+
+        // Track the usable desktop, excluding the menu bar and Dock. Observing
+        // the full-screen video window would keep playback running behind a
+        // maximized app whenever one of those narrow strips remained visible.
+        // Keep alphaValue at 1: the window itself participates in native
+        // occlusion, while its transparent content neither paints nor occludes
+        // the wallpaper. This requires no window enumeration or screen capture.
+        let trackingFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
+        visibilityWindow = DesktopWindow(
+            contentRect: trackingFrame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        visibilityWindow.setFrame(trackingFrame, display: false)
+        visibilityWindow.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) + 2)
+        visibilityWindow.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        visibilityWindow.ignoresMouseEvents = true
+        visibilityWindow.hasShadow = false
+        visibilityWindow.isOpaque = false
+        visibilityWindow.backgroundColor = .clear
+        visibilityWindow.animationBehavior = .none
+        visibilityWindow.hidesOnDeactivate = false
+        visibilityWindow.canHide = false
+        visibilityWindow.isReleasedWhenClosed = false
         observePlayback()
+        observeOcclusion()
     }
 
-    func show() { window.orderFrontRegardless() }
+    func show() {
+        window.orderFrontRegardless()
+        visibilityWindow.orderFrontRegardless()
+        applyPlaybackPolicy()
+    }
 
-    func configure(scaling: VideoScaling, isMuted: Bool) {
+    func configure(scaling: VideoScaling, isMuted: Bool, pauseWhenCovered: Bool) {
         player.isMuted = isMuted
         videoView.playerLayer.videoGravity = scaling == .fill ? .resizeAspectFill : .resizeAspect
+        self.pauseWhenCovered = pauseWhenCovered
+        applyPlaybackPolicy()
     }
 
     func setPlaybackEnabled(_ enabled: Bool) {
-        enabled ? player.play() : player.pause()
+        playbackEnabled = enabled
+        applyPlaybackPolicy()
+    }
+
+    private func applyPlaybackPolicy() {
+        guard !disposed else { return }
+        let shouldPlay = playbackEnabled && (!pauseWhenCovered || !isOccluded)
+        // Pausing keeps the last frame and window in place. Hiding the window
+        // here would make it stay occluded and prevent a visibility-based resume.
+        guard appliedPlaybackEnabled != shouldPlay else { return }
+        appliedPlaybackEnabled = shouldPlay
+        shouldPlay ? player.play() : player.pause()
     }
 
     func dispose() {
@@ -230,12 +291,32 @@ private final class WallpaperSurface {
         observations.removeAll()
         currentItemObservation?.invalidate()
         currentItemObservation = nil
+        if let occlusionObserver {
+            NotificationCenter.default.removeObserver(occlusionObserver)
+            self.occlusionObserver = nil
+        }
         player.pause()
         looper.disableLooping()
         player.removeAllItems()
         videoView.playerLayer.player = nil
+        visibilityWindow.orderOut(nil)
+        visibilityWindow.close()
         window.orderOut(nil)
         window.close()
+    }
+
+    private func observeOcclusion() {
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: visibilityWindow,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.disposed else { return }
+                self.applyPlaybackPolicy()
+                self.onStateChanged()
+            }
+        }
     }
 
     private func observePlayback() {

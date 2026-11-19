@@ -60,6 +60,11 @@ struct WallpaperPreferences {
         nonmutating set { defaults.set(newValue, forKey: "pauseInLowPowerMode") }
     }
 
+    var pauseWhenCovered: Bool {
+        get { defaults.object(forKey: "pauseWhenCovered") as? Bool ?? true }
+        nonmutating set { defaults.set(newValue, forKey: "pauseWhenCovered") }
+    }
+
     var restoreOnLaunch: Bool {
         get { defaults.object(forKey: "restoreOnLaunch") as? Bool ?? true }
         nonmutating set { defaults.set(newValue, forKey: "restoreOnLaunch") }

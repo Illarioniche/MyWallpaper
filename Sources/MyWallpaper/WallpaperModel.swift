@@ -6,18 +6,21 @@ import UniformTypeIdentifiers
 @MainActor
 final class WallpaperModel: ObservableObject {
     let engine = WallpaperEngine()
+    let loginItems: LoginItemController
     private let preferences: WallpaperPreferences
     private var policy = PlaybackPolicy()
     private var subscriptions = Set<AnyCancellable>()
     private var loadingTask: Task<Void, Never>?
     private var loadID = UUID()
     private var scopedURL: URL?
+    private var forwardedLoginError: String?
 
     @Published private(set) var selectedURL: URL?
     @Published private(set) var thumbnail: NSImage?
     @Published private(set) var isLoading = false
     @Published private(set) var hasWallpaper = false
     @Published private(set) var isPlaying = false
+    @Published private(set) var isPausedForOcclusion = false
     @Published private(set) var userPaused: Bool
     @Published private(set) var pauseReason: String?
     @Published var errorMessage: String?
@@ -41,19 +44,27 @@ final class WallpaperModel: ObservableObject {
     @Published var restoreOnLaunch: Bool {
         didSet { preferences.restoreOnLaunch = restoreOnLaunch }
     }
+    @Published var pauseWhenCovered: Bool {
+        didSet { preferences.pauseWhenCovered = pauseWhenCovered; configureEngine() }
+    }
 
     var status: String {
         if isLoading { return "Загружаем видео…" }
         if !hasWallpaper { return selectedURL == nil ? "Выбери своё настроение" : "Обои выключены" }
-        return pauseReason ?? (isPlaying ? "Обои воспроизводятся" : "Подготовка видео…")
+        if let pauseReason { return pauseReason }
+        if isPausedForOcclusion { return "Пауза: рабочий стол скрыт" }
+        return isPlaying ? "Обои воспроизводятся" : "Подготовка видео…"
     }
 
-    init(preferences: WallpaperPreferences = WallpaperPreferences()) {
+    init(preferences: WallpaperPreferences = WallpaperPreferences(),
+         loginItems: LoginItemController? = nil) {
         self.preferences = preferences
+        self.loginItems = loginItems ?? LoginItemController()
         target = preferences.target
         scaling = preferences.scaling
         isMuted = preferences.isMuted
         pauseInLowPowerMode = preferences.pauseInLowPowerMode
+        pauseWhenCovered = preferences.pauseWhenCovered
         restoreOnLaunch = preferences.restoreOnLaunch
         userPaused = preferences.userPaused
         policy.userPaused = preferences.userPaused
@@ -65,6 +76,18 @@ final class WallpaperModel: ObservableObject {
 
         engine.$hasWallpaper.assign(to: &$hasWallpaper)
         engine.$isPlaying.assign(to: &$isPlaying)
+        engine.$isPausedForOcclusion.assign(to: &$isPausedForOcclusion)
+        self.loginItems.$errorMessage
+            .sink { [weak self] message in
+                guard let self else { return }
+                if let message {
+                    self.errorMessage = message
+                } else if self.errorMessage == self.forwardedLoginError {
+                    self.errorMessage = nil
+                }
+                self.forwardedLoginError = message
+            }
+            .store(in: &subscriptions)
         engine.onPlaybackError = { [weak self] message in
             guard let self else { return }
             self.errorMessage = message
@@ -208,13 +231,21 @@ final class WallpaperModel: ObservableObject {
         if let selectedURL { NSWorkspace.shared.activateFileViewerSelecting([selectedURL]) }
     }
 
+    func setLaunchAtLogin(_ enabled: Bool) {
+        loginItems.setEnabled(enabled)
+        if enabled && (loginItems.status == .enabled || loginItems.status == .requiresApproval) {
+            restoreOnLaunch = true
+        }
+    }
+
     private func releaseScope() {
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
     }
 
     private func configureEngine() {
-        engine.configure(target: target, scaling: scaling, isMuted: isMuted)
+        engine.configure(target: target, scaling: scaling, isMuted: isMuted,
+                         pauseWhenCovered: pauseWhenCovered)
     }
 
     private func updatePlayback() {
