@@ -5,6 +5,11 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_ROOT="$PROJECT_ROOT/.build"
 APP_PATH="$PROJECT_ROOT/dist/MyWallpaper.app"
 
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--universal" ) ]]; then
+    echo "Usage: $0 [--universal]" >&2
+    exit 2
+fi
+
 if ! xcrun --find swift >/dev/null 2>&1; then
     echo "Нужны инструменты разработчика Apple. Установите их: xcode-select --install" >&2
     exit 1
@@ -24,13 +29,29 @@ BUILD_OPTIONS=(
     -c release
 )
 
-swift build "${BUILD_OPTIONS[@]}" --product MyWallpaper
-BIN_PATH="$(swift build "${BUILD_OPTIONS[@]}" --show-bin-path)"
+BINARIES=()
+if [[ "${1:-}" == "--universal" ]]; then
+    for architecture in arm64 x86_64; do
+        triple="$architecture-apple-macosx13.0"
+        swift build "${BUILD_OPTIONS[@]}" --triple "$triple" --product MyWallpaper
+        BIN_PATH="$(swift build "${BUILD_OPTIONS[@]}" --triple "$triple" --show-bin-path)"
+        BINARIES+=("$BIN_PATH/MyWallpaper")
+    done
+else
+    swift build "${BUILD_OPTIONS[@]}" --product MyWallpaper
+    BIN_PATH="$(swift build "${BUILD_OPTIONS[@]}" --show-bin-path)"
+    BINARIES+=("$BIN_PATH/MyWallpaper")
+fi
 
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 # Replace the executable atomically so rebuilding does not truncate a running
 # copy's mapped binary. The running app keeps its old version until relaunched.
-cp "$BIN_PATH/MyWallpaper" "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
+if [[ ${#BINARIES[@]} -eq 2 ]]; then
+    xcrun lipo -create "${BINARIES[@]}" -output "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
+    xcrun lipo "$APP_PATH/Contents/MacOS/.MyWallpaper.new" -verify_arch arm64 x86_64
+else
+    cp "${BINARIES[0]}" "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
+fi
 chmod +x "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
 mv -f "$APP_PATH/Contents/MacOS/.MyWallpaper.new" "$APP_PATH/Contents/MacOS/MyWallpaper"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
