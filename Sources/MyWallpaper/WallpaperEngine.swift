@@ -138,9 +138,28 @@ final class WallpaperEngine: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.rebuildSurfaces()
+                self?.refreshScreens()
             }
         }
+    }
+
+    private func refreshScreens() {
+        guard asset != nil else { return }
+        let screens = selectedScreens
+        guard screens.count == surfaces.count,
+              zip(surfaces, screens).allSatisfy({ $0.belongs(to: $1) }) else {
+            rebuildSurfaces()
+            return
+        }
+
+        // Dock changes (including minimized windows) can change the usable
+        // desktop without changing displays. Keep the players and their current
+        // positions; only the desktop and coverage window geometry needs updating.
+        for (surface, screen) in zip(surfaces, screens) {
+            surface.updateGeometry(for: screen)
+        }
+        updateCoverageMonitoring()
+        refreshPlaybackState()
     }
 
     private func rebuildSurfaces() {
@@ -222,6 +241,7 @@ private enum WallpaperError: LocalizedError {
 
 @MainActor
 private final class WallpaperSurface {
+    private let displayID: CGDirectDisplayID?
     private let window: DesktopWindow
     private let visibilityWindow: DesktopWindow
     private let player: AVQueuePlayer
@@ -255,6 +275,7 @@ private final class WallpaperSurface {
         self.onStateChanged = onStateChanged
         self.onFailure = onFailure
         self.pauseWhenCovered = pauseWhenCovered
+        displayID = Self.displayID(for: screen)
 
         player = AVQueuePlayer()
         audio.apply(to: player)
@@ -290,9 +311,7 @@ private final class WallpaperSurface {
         // Native occlusion is supplemented with window bounds: on recent macOS,
         // even a fully covering titled window can leave this tracker "visible".
         // Ignore a narrow edge strip for rounded corners and window tiling gaps.
-        let usableFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
-        let edgeInset = min(16, min(usableFrame.width, usableFrame.height) / 4)
-        let trackingFrame = usableFrame.insetBy(dx: edgeInset, dy: edgeInset)
+        let trackingFrame = Self.trackingFrame(for: screen)
         visibilityWindow = DesktopWindow(
             contentRect: trackingFrame,
             styleMask: .borderless,
@@ -312,6 +331,36 @@ private final class WallpaperSurface {
         visibilityWindow.isReleasedWhenClosed = false
         observePlayback()
         observeOcclusion()
+    }
+
+    func belongs(to screen: NSScreen) -> Bool {
+        guard let displayID else { return false }
+        return displayID == Self.displayID(for: screen)
+    }
+
+    func updateGeometry(for screen: NSScreen) {
+        guard !disposed else { return }
+        if window.frame != screen.frame {
+            window.setFrame(screen.frame, display: true)
+        }
+        let trackingFrame = Self.trackingFrame(for: screen)
+        if visibilityWindow.frame != trackingFrame {
+            visibilityWindow.setFrame(trackingFrame, display: false)
+        }
+        applyPlaybackPolicy()
+    }
+
+    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+              number.uint32Value != kCGNullDirectDisplay else { return nil }
+        return number.uint32Value
+    }
+
+    private static func trackingFrame(for screen: NSScreen) -> NSRect {
+        let visibleFrame = screen.visibleFrame
+        let usableFrame = visibleFrame.isEmpty ? screen.frame : visibleFrame
+        let edgeInset = min(16, min(usableFrame.width, usableFrame.height) / 4)
+        return usableFrame.insetBy(dx: edgeInset, dy: edgeInset)
     }
 
     func show() {
