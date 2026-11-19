@@ -3,6 +3,7 @@ import SwiftUI
 @MainActor
 struct UpdateAvailableBanner: View {
     let version: String
+    var localizer: AppLocalizer = .russian
     var onOpen: () -> Void
 
     var body: some View {
@@ -10,13 +11,13 @@ struct UpdateAvailableBanner: View {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 22)).foregroundStyle(.teal)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Доступна MyWallpaper \(version)")
+                Text(localizer.format("Доступна версия %@", version))
                     .font(.system(size: 13, weight: .semibold))
-                Text("Посмотри, что нового, и скачай обновление.")
+                Text(localizer.text("Посмотри, что нового, и скачай обновление."))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Button("Подробнее", action: onOpen)
+            Button(localizer.text("Подробнее"), action: onOpen)
         }
         .padding(16)
         .background(Color.teal.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
@@ -27,19 +28,20 @@ struct UpdateAvailableBanner: View {
 @MainActor
 struct UpdateSettingsPane: View {
     @ObservedObject var updates: UpdateController
+    var localizer: AppLocalizer = .russian
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsIntro(symbol: "arrow.down.circle.fill", color: .teal,
-                          title: "MyWallpaper становится лучше",
-                          detail: "Проверяй новые версии и выбирай, когда их установить.")
-            SettingsGroup(title: "Версия приложения") {
-                SettingsRow(title: "MyWallpaper", detail: "Установлена версия \(updates.currentVersion)",
+                          title: localizer.text("MyWallpaper становится лучше"),
+                          detail: localizer.text("Проверяй новые версии и выбирай, когда их установить."))
+            SettingsGroup(title: localizer.text("Версия приложения")) {
+                SettingsRow(title: "MyWallpaper", detail: localizer.format("Установлена версия %@", localizer.text(updates.currentVersion)),
                             symbol: "app.badge", color: .teal) {
                     Button {
                         Task { await updates.checkNow() }
                     } label: {
-                        Text(updates.isChecking ? "Проверяем…" : "Проверить обновления")
+                        Text(updates.isChecking ? localizer.text("Проверяем…") : localizer.text("Проверить обновления"))
                     }
                     .disabled(updates.isChecking)
                 }
@@ -56,7 +58,8 @@ struct UpdateSettingsPane: View {
                         Text(statusText).font(.system(size: 12))
                             .fixedSize(horizontal: false, vertical: true)
                         if let date = updates.lastChecked {
-                            Text("Последняя успешная проверка: \(date.formatted(date: .abbreviated, time: .shortened))")
+                            Text(localizer.format("Последняя успешная проверка: %@",
+                                                  date.formatted(.dateTime.day().month(.abbreviated).year().hour().minute().locale(localizer.locale))))
                                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
                         }
                     }
@@ -69,13 +72,13 @@ struct UpdateSettingsPane: View {
                 releaseCard(release)
             }
 
-            SettingsGroup(title: "Проверка обновлений") {
-                SettingsToggle(title: "Проверять автоматически",
-                               detail: "Раз в сутки, пока приложение работает. Только стабильные релизы.",
+            SettingsGroup(title: localizer.text("Проверка обновлений")) {
+                SettingsToggle(title: localizer.text("Проверять автоматически"),
+                               detail: localizer.text("Раз в сутки, пока приложение работает. Только стабильные релизы."),
                                symbol: "arrow.triangle.2.circlepath", color: .blue,
                                isOn: $updates.automaticChecksEnabled)
             }
-            Text("Новая версия появится здесь и в строке меню. Файлы скачиваются через браузер — установку ты запускаешь сам.")
+            Text(localizer.text("Новая версия появится здесь и в строке меню. Файлы скачиваются через браузер — установку ты запускаешь сам."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 4)
@@ -83,7 +86,7 @@ struct UpdateSettingsPane: View {
     }
 
     private func releaseCard(_ release: UpdateRelease) -> some View {
-        SettingsGroup(title: "Доступно обновление") {
+        SettingsGroup(title: localizer.text("Доступно обновление")) {
             VStack(alignment: .leading, spacing: 14) {
                 Label("MyWallpaper \(release.version)", systemImage: "sparkles")
                     .font(.system(size: 17, weight: .semibold))
@@ -98,23 +101,23 @@ struct UpdateSettingsPane: View {
                 HStack(spacing: 12) {
                     if let download = release.downloadURL {
                         Link(destination: download) {
-                            Label("Скачать DMG", systemImage: "arrow.down.circle")
+                            Label(localizer.text("Скачать DMG"), systemImage: "arrow.down.circle")
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                     }
-                    Link("Что нового", destination: release.pageURL)
+                    Link(localizer.text("Что нового"), destination: release.pageURL)
                     if let checksum = release.checksumURL {
                         Link("SHA-256", destination: checksum)
-                            .help("Скачать контрольную сумму образа")
+                            .help(localizer.text("Скачать контрольную сумму образа"))
                     }
                 }
                 if release.downloadURL == nil {
-                    Text("DMG пока не прикреплён. Открой страницу релиза, чтобы посмотреть доступные файлы.")
+                    Text(localizer.text("DMG пока не прикреплён. Открой страницу релиза, чтобы посмотреть доступные файлы."))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Divider()
-                Text("После скачивания заверши MyWallpaper через строку меню. Открой DMG, перенеси приложение в «Программы» с заменой и запусти его снова.")
+                Text(localizer.text("После скачивания заверши MyWallpaper через строку меню. Открой DMG, перенеси приложение в «Программы» с заменой и запусти его снова."))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -125,10 +128,10 @@ struct UpdateSettingsPane: View {
 
     private var statusText: String {
         switch updates.state {
-        case .idle: return "Проверь, появилась ли новая версия."
-        case .checking: return "Проверяем GitHub Releases…"
-        case .upToDate: return "Новых версий нет."
-        case .available(let release): return "Доступна версия \(release.version)."
+        case .idle: return localizer.text("Проверь, появилась ли новая версия.")
+        case .checking: return localizer.text("Проверяем GitHub Releases…")
+        case .upToDate: return localizer.text("Новых версий нет.")
+        case .available(let release): return localizer.format("Доступна версия %@.", release.version)
         case .failed(let message): return message
         }
     }

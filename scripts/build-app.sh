@@ -55,6 +55,12 @@ fi
 chmod +x "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
 mv -f "$APP_PATH/Contents/MacOS/.MyWallpaper.new" "$APP_PATH/Contents/MacOS/MyWallpaper"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+for language in en ru; do
+    mkdir -p "$APP_PATH/Contents/Resources/$language.lproj"
+    cp "$PROJECT_ROOT/Sources/MyWallpaper/Resources/$language.lproj/Localizable.strings" \
+        "$APP_PATH/Contents/Resources/$language.lproj/Localizable.strings"
+    /usr/bin/plutil -lint "$APP_PATH/Contents/Resources/$language.lproj/Localizable.strings"
+done
 
 xcrun swiftc -parse-as-library -swift-version 6 \
     -module-cache-path "$BUILD_ROOT/ModuleCache" \

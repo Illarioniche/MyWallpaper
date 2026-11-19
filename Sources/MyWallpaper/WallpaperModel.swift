@@ -16,6 +16,8 @@ final class WallpaperModel: ObservableObject {
     private var loadID = UUID()
     private var scopedURL: URL?
     private var forwardedLoginError: String?
+    private var renderError: ((AppLocalizer) -> String)?
+    private var isChangingLanguage = false
 
     @Published private(set) var selectedURL: URL?
     @Published private(set) var thumbnail: NSImage?
@@ -28,7 +30,17 @@ final class WallpaperModel: ObservableObject {
     @Published private(set) var userPaused: Bool
     @Published private(set) var pauseReason: String?
     @Published private(set) var powerSource: PowerSource
-    @Published var errorMessage: String?
+    @Published var errorMessage: String? {
+        didSet { if errorMessage == nil { renderError = nil } }
+    }
+
+    @Published var language: AppLanguage {
+        didSet {
+            preferences.language = language
+            applyLocalization()
+        }
+    }
+    var localizer: AppLocalizer { AppLocalizer(language: language) }
 
     @Published var target: DisplayTarget {
         didSet { preferences.target = target; configureEngine() }
@@ -38,6 +50,17 @@ final class WallpaperModel: ObservableObject {
     }
     @Published var isMuted: Bool {
         didSet { preferences.isMuted = isMuted; configureEngine() }
+    }
+    @Published var volume: Double {
+        didSet {
+            let normalized = Double(WallpaperAudioSettings.normalizedVolume(Float(volume)))
+            if volume != normalized {
+                volume = normalized
+                return
+            }
+            preferences.volume = volume
+            configureEngine()
+        }
     }
     @Published var pauseInLowPowerMode: Bool {
         didSet {
@@ -68,9 +91,9 @@ final class WallpaperModel: ObservableObject {
     }
 
     var playbackButtonTitle: String {
-        if !hasWallpaper { return "Включить" }
-        if userPaused { return "Продолжить" }
-        return policy.animatesOnCurrentPowerSource ? "Пауза" : "Оживить"
+        if !hasWallpaper { return localizer.text("Включить") }
+        if userPaused { return localizer.text("Продолжить") }
+        return policy.animatesOnCurrentPowerSource ? localizer.text("Пауза") : localizer.text("Оживить")
     }
 
     var playbackButtonSymbol: String {
@@ -78,14 +101,14 @@ final class WallpaperModel: ObservableObject {
     }
 
     var status: String {
-        if isLoading { return "Загружаем видео…" }
-        if !hasWallpaper { return selectedURL == nil ? "Выбери своё настроение" : "Обои выключены" }
+        if isLoading { return localizer.text("Загружаем видео…") }
+        if !hasWallpaper { return selectedURL == nil ? localizer.text("Выбери своё настроение") : localizer.text("Обои выключены") }
         if let pauseReason { return pauseReason }
-        if isPausedForOcclusion { return "Пауза: рабочий стол скрыт" }
+        if isPausedForOcclusion { return localizer.text("Пауза: рабочий стол скрыт") }
         if isPlaying && occludedDisplayCount > 0 {
-            return "Воспроизведение: \(displayCount - occludedDisplayCount) из \(displayCount) экранов"
+            return localizer.format("Воспроизведение: %@ из %@ экранов", String(displayCount - occludedDisplayCount), String(displayCount))
         }
-        return isPlaying ? "Обои воспроизводятся" : "Подготовка видео…"
+        return isPlaying ? localizer.text("Обои воспроизводятся") : localizer.text("Подготовка видео…")
     }
 
     init(preferences: WallpaperPreferences = WallpaperPreferences(),
@@ -95,12 +118,14 @@ final class WallpaperModel: ObservableObject {
         self.preferences = preferences
         self.loginItems = loginItems ?? LoginItemController()
         self.updates = updates ?? UpdateController()
+        language = preferences.language
         let monitor = powerMonitor ?? PowerSourceMonitor()
         self.powerMonitor = monitor
         powerSource = monitor.source
         target = preferences.target
         scaling = preferences.scaling
         isMuted = preferences.isMuted
+        volume = preferences.volume
         pauseInLowPowerMode = preferences.pauseInLowPowerMode
         pauseWhenCovered = preferences.pauseWhenCovered
         restoreOnLaunch = preferences.restoreOnLaunch
@@ -116,6 +141,7 @@ final class WallpaperModel: ObservableObject {
         if let session = CGSessionCopyCurrentDictionary() as? [String: Any] {
             policy.sessionInactive = !(session[kCGSessionOnConsoleKey as String] as? Bool ?? true)
         }
+        applyLocalization()
 
         engine.$hasWallpaper.assign(to: &$hasWallpaper)
         engine.$isPlaying.assign(to: &$isPlaying)
@@ -134,7 +160,8 @@ final class WallpaperModel: ObservableObject {
         self.loginItems.$errorMessage
             .sink { [weak self] message in
                 guard let self else { return }
-                if let message {
+                if let message, !self.isChangingLanguage || self.errorMessage == self.forwardedLoginError {
+                    self.renderError = nil
                     self.errorMessage = message
                 } else if self.errorMessage == self.forwardedLoginError {
                     self.errorMessage = nil
@@ -142,9 +169,14 @@ final class WallpaperModel: ObservableObject {
                 self.forwardedLoginError = message
             }
             .store(in: &subscriptions)
-        engine.onPlaybackError = { [weak self] message in
+        engine.onPlaybackError = { [weak self] message, detail in
             guard let self else { return }
-            self.errorMessage = message
+            self.renderError = { localizer in
+                let message = localizer.text(message)
+                if let detail, !detail.isEmpty { return message + "\n\n" + detail }
+                return message
+            }
+            self.errorMessage = self.renderError?(self.localizer)
             self.preferences.wallpaperEnabled = false
         }
         configureEngine()
@@ -184,14 +216,14 @@ final class WallpaperModel: ObservableObject {
                 }
             }
         } catch {
-            errorMessage = "Не удалось найти сохранённое видео. Возможно, файл перемещён или диск отключён. Выбери его заново."
+            reportError("Не удалось найти сохранённое видео. Возможно, файл перемещён или диск отключён. Выбери его заново.")
         }
     }
 
     func chooseVideo() {
         let panel = NSOpenPanel()
-        panel.title = "Выбери живые обои"
-        panel.prompt = "Установить обои"
+        panel.title = localizer.text("Выбери живые обои")
+        panel.prompt = localizer.text("Установить обои")
         panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie, .movie]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -205,7 +237,7 @@ final class WallpaperModel: ObservableObject {
 
     func selectVideo(_ url: URL, preservePause: Bool = false) {
         guard url.isFileURL else {
-            errorMessage = "Выбери видео, сохранённое на этом Mac."
+            reportError("Выбери видео, сохранённое на этом Mac.")
             return
         }
         loadingTask?.cancel()
@@ -247,7 +279,7 @@ final class WallpaperModel: ObservableObject {
                 // A later selection or Stop owns the state now.
             } catch {
                 guard self.loadID == requestID else { return }
-                self.errorMessage = "Не удалось открыть видео. \(error.localizedDescription)"
+                self.reportError("Не удалось открыть видео. %@", detail: error.localizedDescription)
             }
         }
     }
@@ -311,12 +343,29 @@ final class WallpaperModel: ObservableObject {
 
     private func configureEngine() {
         engine.configure(target: target, scaling: scaling, isMuted: isMuted,
-                         pauseWhenCovered: pauseWhenCovered)
+                         pauseWhenCovered: pauseWhenCovered, volume: Float(volume))
     }
 
     private func updatePlayback() {
-        pauseReason = policy.pauseReason
+        pauseReason = policy.pauseReason.map { localizer.text($0) }
         engine.setPlaybackEnabled(policy.shouldPlay)
+    }
+
+    private func reportError(_ key: String, detail: String? = nil) {
+        renderError = { localizer in
+            if let detail { return localizer.format(key, localizer.text(detail)) }
+            return localizer.text(key)
+        }
+        errorMessage = renderError?(localizer)
+    }
+
+    private func applyLocalization() {
+        isChangingLanguage = true
+        defer { isChangingLanguage = false }
+        loginItems.localizer = localizer
+        updates.localizer = localizer
+        pauseReason = policy.pauseReason.map { localizer.text($0) }
+        if let renderError { errorMessage = renderError(localizer) }
     }
 
     private func observeSystem() {

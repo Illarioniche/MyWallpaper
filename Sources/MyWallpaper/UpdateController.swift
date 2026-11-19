@@ -35,6 +35,13 @@ final class UpdateController: ObservableObject {
     @Published var automaticChecksEnabled: Bool {
         didSet { defaults.set(automaticChecksEnabled, forKey: Keys.automaticChecks) }
     }
+    @Published var localizer: AppLocalizer {
+        didSet {
+            if case .failed = state, let currentFailure {
+                state = .failed(currentFailure.localized(using: localizer))
+            }
+        }
+    }
 
     let currentVersion: String
     var availableRelease: UpdateRelease? { knownAvailableRelease }
@@ -44,15 +51,18 @@ final class UpdateController: ObservableObject {
     private let now: @MainActor @Sendable () -> Date
     private let transport: UpdateTransport
     private var lastAttempt: Date?
+    private var currentFailure: UpdateFailure?
     private static let automaticInterval: TimeInterval = 24 * 60 * 60
 
     init(currentVersion: String? = nil,
          defaults: UserDefaults = .standard,
          now: @escaping @MainActor @Sendable () -> Date = { Date() },
-         transport: @escaping UpdateTransport = GitHubUpdateTransport.fetch) {
+         transport: @escaping UpdateTransport = GitHubUpdateTransport.fetch,
+         localizer: AppLocalizer = .russian) {
         self.defaults = defaults
         self.now = now
         self.transport = transport
+        self.localizer = localizer
         let version = currentVersion ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         self.currentVersion = version?.isEmpty == false ? version! : "Неизвестна"
         automaticChecksEnabled = defaults.object(forKey: Keys.automaticChecks) as? Bool ?? true
@@ -77,6 +87,7 @@ final class UpdateController: ObservableObject {
 
     func checkNow() async {
         guard !isChecking else { return }
+        currentFailure = nil
         state = .checking
         lastAttempt = now()
         defaults.set(lastAttempt, forKey: Keys.lastAttempt)
@@ -110,7 +121,9 @@ final class UpdateController: ObservableObject {
             }
         } catch {
             // A temporary outage must not remove an already verified download from the UI.
-            state = .failed(Self.message(for: error))
+            let failure = Self.failure(for: error)
+            currentFailure = failure
+            state = .failed(failure.localized(using: localizer))
         }
     }
 
@@ -150,23 +163,23 @@ final class UpdateController: ObservableObject {
         case 500..<600:
             throw UpdateFailure(message: "GitHub временно недоступен. Попробуй позже.")
         default:
-            throw UpdateFailure(message: "GitHub не смог выполнить проверку обновлений (HTTP \(status)).")
+            throw UpdateFailure(message: "GitHub не смог выполнить проверку обновлений (HTTP %@).", argument: String(status))
         }
     }
 
-    private static func message(for error: Error) -> String {
-        if let failure = error as? UpdateFailure { return failure.message }
-        if error is CancellationError { return "Проверка обновлений отменена." }
+    private static func failure(for error: Error) -> UpdateFailure {
+        if let failure = error as? UpdateFailure { return failure }
+        if error is CancellationError { return UpdateFailure(message: "Проверка обновлений отменена.") }
         if let network = error as? URLError {
             switch network.code {
-            case .timedOut: return "GitHub не ответил вовремя. Попробуй ещё раз."
+            case .timedOut: return UpdateFailure(message: "GitHub не ответил вовремя. Попробуй ещё раз.")
             case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
-                return "Не удалось подключиться к GitHub. Проверь подключение к интернету."
-            case .cancelled: return "Проверка обновлений отменена."
-            default: return "Не удалось безопасно подключиться к GitHub. Попробуй позже."
+                return UpdateFailure(message: "Не удалось подключиться к GitHub. Проверь подключение к интернету.")
+            case .cancelled: return UpdateFailure(message: "Проверка обновлений отменена.")
+            default: return UpdateFailure(message: "Не удалось безопасно подключиться к GitHub. Попробуй позже.")
             }
         }
-        return "Не удалось проверить обновления. Попробуй позже."
+        return UpdateFailure(message: "Не удалось проверить обновления. Попробуй позже.")
     }
 
     private enum Keys {
@@ -310,4 +323,15 @@ private final class RejectUpdateRedirects: NSObject, URLSessionTaskDelegate, @un
 
 private struct UpdateFailure: Error {
     let message: String
+    let argument: String?
+
+    init(message: String, argument: String? = nil) {
+        self.message = message
+        self.argument = argument
+    }
+
+    func localized(using localizer: AppLocalizer) -> String {
+        if let argument { return localizer.format(message, argument) }
+        return localizer.text(message)
+    }
 }

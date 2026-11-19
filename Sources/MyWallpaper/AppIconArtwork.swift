@@ -29,7 +29,7 @@ enum AppIconArtwork {
             })
         }
         image.isTemplate = true
-        image.accessibilityDescription = hasUpdate ? "MyWallpaper — доступно обновление" : "MyWallpaper"
+        image.accessibilityDescription = "MyWallpaper"
         return image
     }
 

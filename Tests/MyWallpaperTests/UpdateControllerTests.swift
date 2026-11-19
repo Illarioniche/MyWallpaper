@@ -6,6 +6,32 @@ import Testing
 @MainActor
 struct UpdateControllerTests {
     @Test
+    func changingLanguageRendersTheCurrentFailureWithoutNetworkOrChangingKnownRelease() async throws {
+        try await withDefaults { defaults in
+            let transport = UpdateTestTransport([.response(response(try releaseData())), .response(response(Data(), status: 418))])
+            let model = controller(defaults, transport: transport)
+            await model.checkNow()
+            let release = try #require(model.availableRelease)
+            let checked = model.lastChecked
+            await model.checkNow()
+            let russian = try #require(failureMessage(model.state))
+            let english = AppLocalizer(language: .english)
+
+            model.localizer = english
+
+            let expected = english.format("GitHub не смог выполнить проверку обновлений (HTTP %@).", "418")
+            #expect(model.state == .failed(expected))
+            #expect(expected != russian)
+            #expect(expected.contains("418"))
+            #expect(await transport.count == 2)
+            #expect(model.lastChecked == checked)
+            #expect(model.availableRelease == release, "Release prose and trusted URLs must remain exactly as published.")
+            model.localizer = .russian
+            #expect(model.state == .failed(russian))
+        }
+    }
+
+    @Test
     func stableVersionsUseNumericOrderingAndNormalizeLocalVersions() throws {
         #expect(try #require(UpdateVersion("v0.10.0")) > #require(UpdateVersion("0.9.9")))
         #expect(try #require(UpdateVersion("1.0.0")) > #require(UpdateVersion("0.99.99")))
@@ -264,6 +290,10 @@ struct UpdateControllerTests {
             if started {
                 #expect(model.isChecking)
                 #expect(model.availableRelease?.version == "0.5.0")
+                let known = model.availableRelease
+                model.localizer = AppLocalizer(language: .english)
+                #expect(model.isChecking, "Changing language must not interrupt an in-flight request.")
+                #expect(model.availableRelease == known)
                 await model.checkNow()
                 await model.checkAutomaticallyIfNeeded()
                 #expect(await gate.count == 1)

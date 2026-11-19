@@ -3,10 +3,11 @@ import PackageDescription
 
 let package = Package(
     name: "MyWallpaper",
+    defaultLocalization: "en",
     platforms: [.macOS(.v13)],
     products: [.executable(name: "MyWallpaper", targets: ["MyWallpaper"])],
     targets: [
-        .executableTarget(name: "MyWallpaper"),
+        .executableTarget(name: "MyWallpaper", resources: [.process("Resources")]),
         .testTarget(name: "MyWallpaperTests", dependencies: ["MyWallpaper"])
     ],
     swiftLanguageModes: [.v6]
