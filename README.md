@@ -31,7 +31,7 @@
 
 **Нужны macOS Ventura 13 или новее и Mac с Apple Silicon либо Intel.** Универсальный DMG содержит обе архитектуры; Xcode и Swift для установки не нужны.
 
-1. Скачай `.dmg` из [GitHub Releases](https://github.com/Illarioniche/MyWallpaper/releases). Если готового релиза ещё нет, доступна [сборка из исходников](#сборка-из-исходников).
+1. Скачай `.dmg` из [GitHub Releases](https://github.com/Illarioniche/MyWallpaper/releases).
 2. Открой образ и перетащи **MyWallpaper.app → Applications («Программы»)**.
 3. Извлеки образ и запусти **MyWallpaper** из папки «Программы».
 4. Нажми **«Выбрать видео»** или перетащи MP4/MOV в окно приложения.
@@ -124,8 +124,8 @@ open dist/MyWallpaper.app
 ```text
 dist/
 ├── MyWallpaper.app
-├── MyWallpaper-0.4.0-universal.dmg
-└── MyWallpaper-0.4.0-universal.dmg.sha256
+├── MyWallpaper-0.5.0-universal.dmg
+└── MyWallpaper-0.5.0-universal.dmg.sha256
 ```
 
 Внутри образа находятся приложение, ссылка на папку «Программы» и краткая инструкция. Версия берётся из `Info.plist`, архитектура — из готового исполняемого файла. Для упаковки уже собранного приложения без повторной компиляции:
@@ -139,7 +139,7 @@ dist/
 Проверка скачанного образа из каталога с обоими файлами:
 
 ```sh
-shasum -a 256 -c MyWallpaper-0.4.0-universal.dmg.sha256
+shasum -a 256 -c MyWallpaper-0.5.0-universal.dmg.sha256
 ```
 
 Universal-сборка включает Intel, но текущая проверка запуска выполнялась на Apple Silicon. Для распространения с подтверждённым разработчиком отдельно потребуются Developer ID и нотарификация Apple.
