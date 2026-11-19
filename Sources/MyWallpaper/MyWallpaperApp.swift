@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
@@ -23,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var openedFile = false
     private var launchedAtLogin = false
     private lazy var settings = SettingsMenuController(model: model)
+    private var updateTimer: Timer?
+    private var updateCheckTask: Task<Void, Never>?
+    private var subscriptions = Set<AnyCancellable>()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         launchedAtLogin = LoginItemController.wasLaunchedAtLogin()
@@ -33,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         buildMainMenu()
         settings.onError = { [weak self] in self?.showWindow() }
         settings.onOpenSettings = { [weak self] in self?.showSettings() }
+        settings.onOpenUpdates = { [weak self] in self?.showUpdates() }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = AppIconArtwork.menuBarImage()
         item.button?.toolTip = "MyWallpaper — живые обои"
@@ -41,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         statusItem = item
+        startUpdateChecks()
         if !openedFile { model.restore() }
         if !launchedAtLogin { showWindow() }
     }
@@ -60,7 +66,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showWindow()
     }
 
-    func applicationWillTerminate(_ notification: Notification) { model.shutDown() }
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if statusItem != nil { checkForUpdatesAutomatically() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        updateTimer?.invalidate()
+        updateCheckTask?.cancel()
+        subscriptions.removeAll()
+        model.shutDown()
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -71,6 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
+        if let release = model.updates.availableRelease {
+            let update = addItem("Доступна версия \(release.version)…", action: #selector(showUpdates), to: menu)
+            update.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
+            menu.addItem(.separator())
+        }
         addItem("Открыть MyWallpaper…", action: #selector(showWindow), to: menu)
         addItem("Выбрать видео…", action: #selector(chooseVideo), key: "o", to: menu)
         let playback = addItem(model.hasWallpaper ? model.playbackButtonTitle : "Включить обои",
@@ -121,6 +141,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showWindow()
     }
 
+    @objc private func showUpdates() {
+        navigation.section = .updates
+        showWindow()
+    }
+
+    @objc private func checkForUpdates() {
+        showUpdates()
+        Task { await model.updates.checkNow() }
+    }
+
+    private func startUpdateChecks() {
+        model.updates.objectWillChange
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.refreshUpdateIndicator() }
+            }
+            .store(in: &subscriptions)
+        model.updates.$automaticChecksEnabled
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.checkForUpdatesAutomatically() }
+            }
+            .store(in: &subscriptions)
+        // A lightweight hourly wake-up; the controller persists the 24-hour limit.
+        let timer = Timer(timeInterval: 3_600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkForUpdatesAutomatically() }
+        }
+        timer.tolerance = 300
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+        refreshUpdateIndicator()
+        checkForUpdatesAutomatically()
+    }
+
+    private func checkForUpdatesAutomatically() {
+        guard updateCheckTask == nil else { return }
+        updateCheckTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.updateCheckTask = nil }
+            await self.model.updates.checkAutomaticallyIfNeeded()
+        }
+    }
+
+    private func refreshUpdateIndicator() {
+        let release = model.updates.availableRelease
+        statusItem?.button?.image = AppIconArtwork.menuBarImage(hasUpdate: release != nil)
+        statusItem?.button?.toolTip = release.map { "MyWallpaper — доступна версия \($0.version)" }
+            ?? "MyWallpaper — живые обои"
+    }
+
     @discardableResult
     private func addItem(_ title: String, action: Selector, key: String = "", to menu: NSMenu) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
@@ -135,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appMenu = NSMenu()
         addItem("О MyWallpaper", action: #selector(showWindow), to: appMenu)
         addItem("Настройки…", action: #selector(showSettings), key: ",", to: appMenu)
+        addItem("Проверить обновления…", action: #selector(checkForUpdates), to: appMenu)
         appMenu.addItem(.separator())
         addItem("Завершить MyWallpaper", action: #selector(quit), key: "q", to: appMenu)
         appItem.submenu = appMenu

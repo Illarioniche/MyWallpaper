@@ -4,12 +4,14 @@ import SwiftUI
 struct ControlView: View {
     @ObservedObject var model: WallpaperModel
     @ObservedObject var navigation: AppNavigation
+    @ObservedObject private var updates: UpdateController
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var dropTargeted = false
 
     init(model: WallpaperModel, navigation: AppNavigation = AppNavigation()) {
         self.model = model
         self.navigation = navigation
+        self.updates = model.updates
     }
 
     var body: some View {
@@ -21,10 +23,14 @@ struct ControlView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         if let error = model.errorMessage { errorBanner(error) }
+                        if navigation.section != .updates, let release = updates.availableRelease {
+                            UpdateAvailableBanner(version: release.version) { navigation.section = .updates }
+                        }
                         switch navigation.section {
                         case .wallpaper: WallpaperSettingsPane(model: model)
                         case .general: GeneralSettingsPane(model: model)
                         case .power: PowerSettingsPane(model: model)
+                        case .updates: UpdateSettingsPane(updates: updates)
                         }
                     }
                     .frame(maxWidth: 720, alignment: .leading)
@@ -84,6 +90,10 @@ struct ControlView: View {
                     HStack(spacing: 11) {
                         SettingsIcon(symbol: section.symbol, color: section.color, size: 28)
                         Text(section.title).font(.system(size: 13, weight: .medium))
+                        if section == .updates, updates.availableRelease != nil {
+                            Circle().fill(Color.teal).frame(width: 6, height: 6)
+                                .accessibilityLabel("Доступна новая версия")
+                        }
                     }
                     .padding(.vertical, 5)
                     .tag(section)
@@ -383,13 +393,11 @@ private struct LoginSettingsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsToggle(title: "Запускать при входе в macOS",
-                           detail: loginItems.status == .unavailable
-                               ? "Доступно из собранного приложения MyWallpaper.app."
-                               : "Открывать в строке меню без лишних окон.",
+                           detail: loginItems.statusDetail,
                            symbol: "power", color: .teal,
                            isOn: Binding(get: { loginItems.status == .enabled },
                                          set: { value in model.setLaunchAtLogin(value) }))
-                .disabled(loginItems.status == .unavailable || loginItems.status == .requiresApproval)
+                .disabled(!loginItems.canToggle)
             if loginItems.status == .requiresApproval {
                 HStack(spacing: 8) {
                     Label("Нужно разрешение macOS", systemImage: "exclamationmark.circle")
@@ -398,6 +406,16 @@ private struct LoginSettingsRow: View {
                     Spacer(minLength: 6)
                     Button("Отменить") { model.setLaunchAtLogin(false) }
                     Button("Разрешить…", action: loginItems.openSystemSettings)
+                }
+                .controlSize(.small)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            } else if loginItems.status == .notFound || loginItems.status == .unavailable
+                        || loginItems.errorMessage != nil {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button("Проверить снова") { loginItems.refresh() }
+                    Button("Настройки входа macOS…") { loginItems.openSystemSettings() }
                 }
                 .controlSize(.small)
                 .padding(.horizontal, 16)
@@ -512,7 +530,7 @@ private enum AppColors {
     static var statusBackground: Color { Color.primary.opacity(0.045) }
 }
 
-private struct SettingsIntro: View {
+struct SettingsIntro: View {
     let symbol: String
     let color: Color
     let title: String
@@ -582,7 +600,7 @@ private struct SettingsCard<Content: View>: View {
     }
 }
 
-private struct SettingsGroup<Content: View>: View {
+struct SettingsGroup<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
 
@@ -598,7 +616,7 @@ private struct SettingsGroup<Content: View>: View {
     }
 }
 
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String? = nil
     let symbol: String
@@ -617,7 +635,7 @@ private struct SettingsRow<Control: View>: View {
     }
 }
 
-private struct SettingsToggle: View {
+struct SettingsToggle: View {
     let title: String
     var detail: String? = nil
     let symbol: String
@@ -653,6 +671,6 @@ private struct SettingsLabel: View {
     }
 }
 
-private struct SettingsDivider: View {
+struct SettingsDivider: View {
     var body: some View { Divider().padding(.leading, 60).padding(.trailing, 16) }
 }

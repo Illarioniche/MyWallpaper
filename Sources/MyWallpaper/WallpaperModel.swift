@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 final class WallpaperModel: ObservableObject {
     let engine = WallpaperEngine()
     let loginItems: LoginItemController
+    let updates: UpdateController
     private let powerMonitor: any PowerSourceMonitoring
     private let preferences: WallpaperPreferences
     private var policy = PlaybackPolicy()
@@ -89,9 +90,11 @@ final class WallpaperModel: ObservableObject {
 
     init(preferences: WallpaperPreferences = WallpaperPreferences(),
          loginItems: LoginItemController? = nil,
-         powerMonitor: (any PowerSourceMonitoring)? = nil) {
+         powerMonitor: (any PowerSourceMonitoring)? = nil,
+         updates: UpdateController? = nil) {
         self.preferences = preferences
         self.loginItems = loginItems ?? LoginItemController()
+        self.updates = updates ?? UpdateController()
         let monitor = powerMonitor ?? PowerSourceMonitor()
         self.powerMonitor = monitor
         powerSource = monitor.source

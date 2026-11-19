@@ -6,6 +6,7 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
     private let model: WallpaperModel
     var onError: (() -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onOpenUpdates: (() -> Void)?
 
     init(model: WallpaperModel) { self.model = model }
 
@@ -21,11 +22,15 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
         model.loginItems.refresh()
         menu.removeAllItems()
         add("Открыть настройки…", action: #selector(openSettings), to: menu)
+        let updateTitle = model.updates.availableRelease.map { "Доступна версия \($0.version)…" }
+            ?? (model.updates.isChecking ? "Проверяем обновления…" : "Проверить обновления…")
+        let update = add(updateTitle, action: #selector(checkUpdates), to: menu)
+        update.isEnabled = !model.updates.isChecking
         menu.addItem(.separator())
         let launch = add("Запускать при входе в macOS", action: #selector(toggleLogin), to: menu)
         switch model.loginItems.status {
         case .enabled: launch.state = .on
-        case .disabled: launch.state = .off
+        case .disabled, .notFound: launch.state = .off
         case .requiresApproval:
             launch.state = .mixed
             let pending = NSMenuItem(title: "Автозапуск ожидает разрешения macOS", action: nil, keyEquivalent: "")
@@ -34,7 +39,13 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
             add("Разрешить в настройках macOS…", action: #selector(openLoginSettings), to: menu)
         case .unavailable:
             launch.isEnabled = false
-            launch.toolTip = "Автозапуск доступен из собранного приложения MyWallpaper.app."
+        }
+        launch.toolTip = model.loginItems.statusDetail
+        // Pending approval can still be cancelled from this menu.
+        if model.loginItems.status != .requiresApproval { launch.isEnabled = model.loginItems.canToggle }
+        if model.loginItems.status == .notFound || model.loginItems.status == .unavailable
+            || model.loginItems.errorMessage != nil {
+            add("Настройки входа macOS…", action: #selector(openLoginSettings), to: menu)
         }
         check("Восстанавливать обои при запуске", value: model.restoreOnLaunch,
               action: #selector(toggleRestore), to: menu)
@@ -82,6 +93,12 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openLoginSettings() { model.loginItems.openSystemSettings() }
     @objc private func openSettings() { onOpenSettings?() }
+    @objc private func checkUpdates() {
+        onOpenUpdates?()
+        if model.updates.availableRelease == nil {
+            Task { await model.updates.checkNow() }
+        }
+    }
     @objc private func toggleExternalPower() { model.animateOnExternalPower.toggle() }
     @objc private func toggleBattery() { model.animateOnBattery.toggle() }
     @objc private func toggleRestore() { model.restoreOnLaunch.toggle() }

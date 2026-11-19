@@ -12,13 +12,24 @@ enum AppIconArtwork {
         return image
     }
 
-    static func menuBarImage() -> NSImage {
+    static func menuBarImage(hasUpdate: Bool = false) -> NSImage {
         let image = NSImage(size: NSSize(width: 18, height: 18))
         for scale in [1, 2] {
-            image.addRepresentation(bitmap(size: 18, scale: scale, coordinateSize: 18, draw: drawMenuBarMark))
+            image.addRepresentation(bitmap(size: 18, scale: scale, coordinateSize: 18) {
+                drawMenuBarMark()
+                if hasUpdate {
+                    // Keep the status item compact so the update badge does not need extra menu-bar space.
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current?.compositingOperation = .clear
+                    NSBezierPath(ovalIn: NSRect(x: 11, y: 11, width: 7, height: 7)).fill()
+                    NSGraphicsContext.restoreGraphicsState()
+                    NSColor.black.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: 12.5, y: 12.5, width: 4, height: 4)).fill()
+                }
+            })
         }
         image.isTemplate = true
-        image.accessibilityDescription = "MyWallpaper"
+        image.accessibilityDescription = hasUpdate ? "MyWallpaper — доступно обновление" : "MyWallpaper"
         return image
     }
 
