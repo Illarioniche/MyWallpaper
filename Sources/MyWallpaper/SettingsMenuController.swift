@@ -1,10 +1,11 @@
 import AppKit
 
-/// Shared by the menu-bar submenu, the gear button and the standard ⌘, command.
+/// Fast access to the same settings shown in the app's sidebar sections.
 @MainActor
 final class SettingsMenuController: NSObject, NSMenuDelegate {
     private let model: WallpaperModel
     var onError: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
 
     init(model: WallpaperModel) { self.model = model }
 
@@ -19,6 +20,8 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         model.loginItems.refresh()
         menu.removeAllItems()
+        add("Открыть настройки…", action: #selector(openSettings), to: menu)
+        menu.addItem(.separator())
         let launch = add("Запускать при входе в macOS", action: #selector(toggleLogin), to: menu)
         switch model.loginItems.status {
         case .enabled: launch.state = .on
@@ -36,6 +39,10 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
         check("Восстанавливать обои при запуске", value: model.restoreOnLaunch,
               action: #selector(toggleRestore), to: menu)
         menu.addItem(.separator())
+        check("Живые обои от сети", value: model.animateOnExternalPower,
+              action: #selector(toggleExternalPower), to: menu)
+        check("Живые обои от батареи", value: model.animateOnBattery,
+              action: #selector(toggleBattery), to: menu)
         check("Пауза, когда рабочий стол скрыт", value: model.pauseWhenCovered,
               action: #selector(toggleCovered), to: menu)
             .toolTip = "На каждом экране отдельно. Частично видимые обои продолжают воспроизводиться."
@@ -74,6 +81,9 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openLoginSettings() { model.loginItems.openSystemSettings() }
+    @objc private func openSettings() { onOpenSettings?() }
+    @objc private func toggleExternalPower() { model.animateOnExternalPower.toggle() }
+    @objc private func toggleBattery() { model.animateOnBattery.toggle() }
     @objc private func toggleRestore() { model.restoreOnLaunch.toggle() }
     @objc private func toggleCovered() { model.pauseWhenCovered.toggle() }
     @objc private func toggleLowPower() { model.pauseInLowPowerMode.toggle() }

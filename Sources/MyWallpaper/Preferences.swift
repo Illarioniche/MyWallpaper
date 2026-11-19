@@ -20,10 +20,18 @@ struct PlaybackPolicy {
     var sessionInactive = false
     var lowPowerMode = false
     var pauseInLowPowerMode = true
+    var powerSource: PowerSource = .external
+    var animateOnExternalPower = true
+    var animateOnBattery = false
+
+    var animatesOnCurrentPowerSource: Bool {
+        // Missing power readings should not unexpectedly freeze a desktop Mac.
+        powerSource == .battery ? animateOnBattery : animateOnExternalPower
+    }
 
     var shouldPlay: Bool {
         !userPaused && !systemSleeping && !screensSleeping && !sessionInactive
-            && !(lowPowerMode && pauseInLowPowerMode)
+            && !(lowPowerMode && pauseInLowPowerMode) && animatesOnCurrentPowerSource
     }
 
     var pauseReason: String? {
@@ -31,6 +39,13 @@ struct PlaybackPolicy {
         if systemSleeping || screensSleeping { return "Экран спит" }
         if sessionInactive { return "Сеанс неактивен" }
         if lowPowerMode && pauseInLowPowerMode { return "Пауза для экономии энергии" }
+        if !animatesOnCurrentPowerSource {
+            switch powerSource {
+            case .battery: return "Статичные обои · от батареи"
+            case .external: return "Статичные обои · от сети"
+            case .unknown: return "Статичные обои · источник питания неизвестен"
+            }
+        }
         return nil
     }
 }
@@ -63,6 +78,16 @@ struct WallpaperPreferences {
     var pauseWhenCovered: Bool {
         get { defaults.object(forKey: "pauseWhenCovered") as? Bool ?? true }
         nonmutating set { defaults.set(newValue, forKey: "pauseWhenCovered") }
+    }
+
+    var animateOnExternalPower: Bool {
+        get { defaults.object(forKey: "animateOnExternalPower") as? Bool ?? true }
+        nonmutating set { defaults.set(newValue, forKey: "animateOnExternalPower") }
+    }
+
+    var animateOnBattery: Bool {
+        get { defaults.object(forKey: "animateOnBattery") as? Bool ?? false }
+        nonmutating set { defaults.set(newValue, forKey: "animateOnBattery") }
     }
 
     var restoreOnLaunch: Bool {

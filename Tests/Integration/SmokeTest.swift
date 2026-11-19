@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import SwiftUI
 
 /// Runs against the real AppKit/AVFoundation stack with isolated app preferences.
@@ -52,7 +53,8 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         guard let defaults = UserDefaults(suiteName: domain) else {
             throw SmokeFailure(message: "Unable to create isolated preferences.")
         }
-        let model = WallpaperModel(preferences: WallpaperPreferences(defaults: defaults))
+        let model = WallpaperModel(preferences: WallpaperPreferences(defaults: defaults),
+                                   powerMonitor: SmokePowerMonitor(.external))
         try require(model.pauseWhenCovered, "Smart pause should be enabled by default.")
         model.pauseInLowPowerMode = false
         // Exercise ordinary playback independently of the user's currently open windows.
@@ -75,11 +77,10 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
             try require(window.ignoresMouseEvents, "Wallpaper intercepts desktop mouse events.")
             try require(!window.canBecomeKey && !window.canBecomeMain, "Wallpaper can steal keyboard focus.")
             try require(window.collectionBehavior.contains(.canJoinAllSpaces), "Wallpaper is not configured for Spaces.")
-            try require((window.contentView?.layer as? AVPlayerLayer)?.player?.isMuted == true,
+            try require(player(in: window)?.isMuted == true,
                         "Wallpaper must start without audio.")
         }
-        guard let player = desktopWindows.first?.contentView?.layer as? AVPlayerLayer,
-              let queue = player.player else {
+        guard let window = desktopWindows.first, let queue = player(in: window) else {
             throw SmokeFailure(message: "Desktop window has no AVPlayerLayer/player.")
         }
         let initialTime = queue.currentTime().seconds
@@ -130,7 +131,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         model.scaling = .fit
         try await settle()
         try require(desktopWindows.count == 1, "Primary-screen mode should create exactly one wallpaper window.")
-        try require((desktopWindows.first?.contentView?.layer as? AVPlayerLayer)?.videoGravity == .resizeAspect,
+        try require(desktopWindows.first.flatMap { videoLayer(in: $0) }?.videoGravity == .resizeAspect,
                     "Fit scaling was not applied to the player layer.")
         NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApp)
         try await settle()
@@ -142,7 +143,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
             model.isPlaying && self.desktopWindows.count == NSScreen.screens.count
         }
         for window in desktopWindows {
-            try require((window.contentView?.layer as? AVPlayerLayer)?.videoGravity == .resizeAspectFill,
+            try require(videoLayer(in: window)?.videoGravity == .resizeAspectFill,
                         "Fill scaling was not applied to every screen.")
         }
         try await checkOcclusion(model)
@@ -151,12 +152,13 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         try require(!model.hasWallpaper && !model.isPlaying && wallpaperWindows.isEmpty,
                     "Shutdown left wallpaper windows or playback active.")
         try await checkRestoration(video: video, defaults: defaults)
+        try await checkPowerProfiles(video: video)
     }
 
     private var desktopWindows: [NSWindow] {
         let level = Int(CGWindowLevelForKey(.desktopWindow)) + 1
         return NSApp.windows.filter {
-            $0.isVisible && $0.level.rawValue == level && $0.contentView?.layer is AVPlayerLayer
+            $0.isVisible && $0.level.rawValue == level && videoLayer(in: $0) != nil
         }
     }
 
@@ -260,7 +262,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
                     "Quitting should preserve the enabled wallpaper for the next launch.")
 
         do {
-            let restored = WallpaperModel(preferences: preferences)
+            let restored = WallpaperModel(preferences: preferences, powerMonitor: SmokePowerMonitor(.external))
             defer { restored.shutDown() }
             restored.restore()
             try await wait("automatic playback restored from the saved bookmark") {
@@ -275,7 +277,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         try require(wallpaperWindows.isEmpty, "A restored model left wallpaper windows on shutdown.")
 
         do {
-            let paused = WallpaperModel(preferences: preferences)
+            let paused = WallpaperModel(preferences: preferences, powerMonitor: SmokePowerMonitor(.external))
             defer { paused.shutDown() }
             paused.restore()
             try await wait("restore of a manually paused wallpaper") {
@@ -287,7 +289,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         }
 
         do {
-            let stopped = WallpaperModel(preferences: preferences)
+            let stopped = WallpaperModel(preferences: preferences, powerMonitor: SmokePowerMonitor(.external))
             defer { stopped.shutDown() }
             stopped.restore()
             try await wait("remembered video after Stop") { stopped.thumbnail != nil }
@@ -300,7 +302,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         preferences.userPaused = false
         preferences.restoreOnLaunch = false
         do {
-            let disabled = WallpaperModel(preferences: preferences)
+            let disabled = WallpaperModel(preferences: preferences, powerMonitor: SmokePowerMonitor(.external))
             defer { disabled.shutDown() }
             disabled.restore()
             try await wait("remembered video with launch restoration disabled") { disabled.thumbnail != nil }
@@ -312,7 +314,119 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func player(in window: NSWindow) -> AVPlayer? {
-        (window.contentView?.layer as? AVPlayerLayer)?.player
+        videoLayer(in: window)?.player
+    }
+
+    private func videoLayer(in window: NSWindow) -> AVPlayerLayer? {
+        namedLayer("wallpaper.video", in: window.contentView?.layer) as? AVPlayerLayer
+    }
+
+    private func namedLayer(_ name: String, in layer: CALayer?) -> CALayer? {
+        guard let layer else { return nil }
+        if layer.name == name { return layer }
+        for child in layer.sublayers ?? [] {
+            if let match = namedLayer(name, in: child) { return match }
+        }
+        return nil
+    }
+
+    private func checkPowerProfiles(video: URL) async throws {
+        let domain = "MyWallpaperPowerSmokeTest.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: domain) else {
+            throw SmokeFailure(message: "Unable to create power-test preferences.")
+        }
+        let preferences = WallpaperPreferences(defaults: defaults)
+        preferences.pauseInLowPowerMode = false
+        preferences.pauseWhenCovered = false
+        let monitor = SmokePowerMonitor(.battery)
+        let model = WallpaperModel(preferences: preferences, powerMonitor: monitor)
+        defer {
+            model.shutDown()
+            defaults.removePersistentDomain(forName: domain)
+        }
+
+        // No initial play/then-pause priming: a cold battery launch must already
+        // contain a real video poster while all players remain stopped.
+        model.selectVideo(video)
+        try await wait("cold battery wallpaper and poster") {
+            model.hasWallpaper && model.thumbnail != nil && !model.isLoading
+        }
+        try require(!model.isPlaying && !model.userPaused && !model.animateOnBattery,
+                    "Selecting a file on battery must preserve the default static profile.")
+        try require(model.engine.posterImage != nil, "Cold static wallpaper has no decoded poster frame.")
+        try require(desktopWindows.count == NSScreen.screens.count, "Cold static wallpaper is missing a screen.")
+        for window in desktopWindows {
+            guard let videoLayer = videoLayer(in: window),
+                  let poster = namedLayer("wallpaper.poster", in: window.contentView?.layer) else {
+                throw SmokeFailure(message: "The static/video compositor is missing a named layer.")
+            }
+            try require(poster.contents != nil, "A static wallpaper has no poster image contents.")
+            try require((!poster.isHidden || videoLayer.isReadyForDisplay) && videoLayer.player?.rate == 0,
+                        "Cold static mode either hides both frames or starts playing.")
+        }
+        try await requireStationaryPlayers("cold static wallpaper")
+
+        let windowIDs = Set(desktopWindows.map(\.windowNumber))
+        guard let first = desktopWindows.first, let queue = player(in: first) else {
+            throw SmokeFailure(message: "Power test has no player.")
+        }
+        monitor.send(.external)
+        try await wait("automatic animation after connecting external power") { model.isPlaying }
+        let initialTime = queue.currentTime().seconds
+        try await wait("advancing frame on external power", timeout: 5) {
+            abs(queue.currentTime().seconds - initialTime) > 0.15
+        }
+        let beforeDisconnect = queue.currentTime().seconds
+        monitor.send(.battery)
+        try await wait("static frame after disconnecting external power") { !model.isPlaying }
+        try require(Set(desktopWindows.map(\.windowNumber)) == windowIDs,
+                    "Power changes rebuilt wallpaper windows instead of pausing existing players.")
+        try require(abs(queue.currentTime().seconds - beforeDisconnect) < 0.1,
+                    "Switching to battery reset the current video frame.")
+        try await requireStationaryPlayers("last frame after switching to battery")
+
+        model.togglePlayback()
+        try await wait("explicit battery animation override") { model.isPlaying }
+        try require(model.animateOnBattery && preferences.animateOnBattery && !model.userPaused,
+                    "Explicit Play did not persist the battery-animation override.")
+        model.animateOnExternalPower = false
+        monitor.send(.external)
+        try await wait("user-selected static mode on external power") { !model.isPlaying }
+        monitor.send(.battery)
+        try await wait("saved battery animation preference") { model.isPlaying }
+        monitor.send(.unknown)
+        try await wait("unknown source follows static external profile") { !model.isPlaying }
+
+        model.togglePlayback()
+        try await wait("explicit Play updates the external fallback profile") { model.isPlaying }
+        try require(model.animateOnExternalPower && preferences.animateOnExternalPower,
+                    "Explicit Play on an unknown source did not update the external profile.")
+        model.togglePlayback()
+        monitor.send(.battery)
+        monitor.send(.external)
+        try await settle()
+        try require(model.userPaused && !model.isPlaying && preferences.userPaused,
+                    "A power-source event cleared manual pause.")
+
+        model.stop()
+        model.animateOnBattery = false
+        monitor.send(.battery)
+        model.togglePlayback()
+        try await wait("explicit Play of a stopped wallpaper on battery") { model.hasWallpaper && model.isPlaying }
+        try require(model.animateOnBattery && preferences.animateOnBattery && !model.userPaused,
+                    "Restarting a stopped wallpaper failed to opt the current profile into animation.")
+        print("PASS: cold battery still frame, AC resume, last-frame retention, saved overrides and manual pause")
+    }
+
+    private func requireStationaryPlayers(_ description: String) async throws {
+        let players = desktopWindows.compactMap { player(in: $0) }
+        let positions = players.map { $0.currentTime().seconds }
+        try await Task.sleep(for: .milliseconds(450))
+        for (player, position) in zip(players, positions) {
+            try require(position.isFinite && player.rate == 0
+                        && abs(player.currentTime().seconds - position) < 0.025,
+                        "Video time advanced during \(description).")
+        }
     }
 
     private func makeCover(frame: NSRect) -> NSWindow {
@@ -349,7 +463,7 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
     private func settle() async throws { try await Task.sleep(for: .milliseconds(300)) }
 
     private func capture(_ model: WallpaperModel, to url: URL) async throws {
-        let bounds = NSRect(x: 0, y: 0, width: 800, height: 536)
+        let bounds = NSRect(x: 0, y: 0, width: 940, height: 696)
         let hosting = NSHostingView(rootView: ControlView(model: model))
         hosting.frame = bounds
         let window = NSWindow(contentRect: bounds, styleMask: .borderless, backing: .buffered, defer: false)
@@ -371,4 +485,14 @@ private final class SmokeDelegate: NSObject, NSApplicationDelegate {
         }
         try data.write(to: url)
     }
+}
+
+@MainActor
+private final class SmokePowerMonitor: PowerSourceMonitoring {
+    private let subject: CurrentValueSubject<PowerSource, Never>
+    var source: PowerSource { subject.value }
+    var sourcePublisher: AnyPublisher<PowerSource, Never> { subject.eraseToAnyPublisher() }
+
+    init(_ source: PowerSource) { subject = CurrentValueSubject(source) }
+    func send(_ source: PowerSource) { subject.send(source) }
 }

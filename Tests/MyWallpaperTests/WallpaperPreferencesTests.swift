@@ -13,6 +13,8 @@ struct WallpaperPreferencesTests {
             #expect(preferences.isMuted)
             #expect(preferences.pauseInLowPowerMode)
             #expect(preferences.pauseWhenCovered)
+            #expect(preferences.animateOnExternalPower)
+            #expect(!preferences.animateOnBattery)
             #expect(preferences.restoreOnLaunch)
             #expect(!preferences.userPaused)
             #expect(!preferences.wallpaperEnabled)
@@ -29,6 +31,8 @@ struct WallpaperPreferencesTests {
             preferences.isMuted = false
             preferences.pauseInLowPowerMode = false
             preferences.pauseWhenCovered = false
+            preferences.animateOnExternalPower = false
+            preferences.animateOnBattery = true
             preferences.restoreOnLaunch = false
             preferences.userPaused = true
             preferences.wallpaperEnabled = true
@@ -41,10 +45,39 @@ struct WallpaperPreferencesTests {
             #expect(!restored.isMuted, "An explicitly disabled setting must not fall back to true.")
             #expect(!restored.pauseInLowPowerMode)
             #expect(!restored.pauseWhenCovered)
+            #expect(!restored.animateOnExternalPower)
+            #expect(restored.animateOnBattery)
             #expect(!restored.restoreOnLaunch)
             #expect(restored.userPaused)
             #expect(restored.wallpaperEnabled)
             #expect(restored.videoBookmark == bookmark)
+        }
+    }
+
+    @Test
+    func addingPowerProfilesKeepsExistingSettingsAndManualPause() throws {
+        try withIsolatedDefaults { defaults in
+            // Simulate preferences saved by the version before power profiles existed.
+            defaults.set(true, forKey: "userPaused")
+            defaults.set(false, forKey: "isMuted")
+            defaults.set(false, forKey: "restoreOnLaunch")
+            defaults.set("main", forKey: "displayTarget")
+            let bookmark = Data([0x44, 0x55])
+            defaults.set(bookmark, forKey: "videoBookmark")
+
+            let preferences = WallpaperPreferences(defaults: defaults)
+            #expect(preferences.animateOnExternalPower)
+            #expect(!preferences.animateOnBattery)
+            #expect(preferences.userPaused)
+            #expect(!preferences.isMuted)
+            #expect(!preferences.restoreOnLaunch)
+            #expect(preferences.target == .main)
+            #expect(preferences.videoBookmark == bookmark)
+
+            preferences.animateOnBattery = true
+            preferences.animateOnExternalPower = false
+            #expect(preferences.userPaused)
+            #expect(preferences.videoBookmark == bookmark)
         }
     }
 

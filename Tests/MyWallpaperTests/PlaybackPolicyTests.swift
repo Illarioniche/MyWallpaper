@@ -4,6 +4,90 @@ import Testing
 @Suite
 struct PlaybackPolicyTests {
     @Test
+    func defaultsAnimateOnExternalPowerAndHoldAStillFrameOnBattery() {
+        var policy = PlaybackPolicy()
+        policy.powerSource = .external
+        #expect(policy.shouldPlay)
+        #expect(policy.pauseReason == nil)
+
+        policy.powerSource = .battery
+        #expect(!policy.shouldPlay)
+        #expect(!policy.animatesOnCurrentPowerSource)
+        #expect(policy.pauseReason != nil)
+
+        policy.powerSource = .external
+        #expect(policy.shouldPlay, "Plugging in should resume unless another pause remains.")
+    }
+
+    @Test
+    func bothPowerProfilesCanBeReversedIndependently() {
+        var policy = PlaybackPolicy()
+        policy.animateOnExternalPower = false
+        policy.animateOnBattery = true
+        policy.powerSource = .external
+        #expect(!policy.shouldPlay)
+
+        policy.powerSource = .battery
+        #expect(policy.shouldPlay)
+        policy.powerSource = .external
+        #expect(!policy.shouldPlay, "Changing the source must not rewrite either saved profile.")
+        #expect(policy.animateOnBattery)
+        #expect(!policy.animateOnExternalPower)
+    }
+
+    @Test
+    func unknownPowerUsesTheExternalProfileIncludingItsStaticOverride() {
+        var policy = PlaybackPolicy()
+        policy.powerSource = .unknown
+        #expect(policy.shouldPlay)
+
+        policy.animateOnExternalPower = false
+        policy.animateOnBattery = true
+        #expect(!policy.shouldPlay, "Unknown does not mean unconditional animation.")
+        #expect(!policy.animatesOnCurrentPowerSource)
+    }
+
+    @Test
+    func pluggingInDoesNotClearAManualPause() {
+        var policy = PlaybackPolicy()
+        policy.powerSource = .battery
+        policy.userPaused = true
+        policy.powerSource = .external
+        #expect(!policy.shouldPlay)
+        #expect(policy.userPaused)
+
+        policy.powerSource = .battery
+        policy.animateOnBattery = true
+        #expect(!policy.shouldPlay, "A profile preference change does not remove manual pause.")
+        policy.userPaused = false
+        #expect(policy.shouldPlay)
+    }
+
+    @Test
+    func animationOverridesStillRespectSleepSessionAndLowPowerPauses() {
+        var policy = PlaybackPolicy()
+        policy.powerSource = .battery
+        policy.animateOnBattery = true
+        policy.systemSleeping = true
+        #expect(!policy.shouldPlay)
+
+        policy.systemSleeping = false
+        policy.sessionInactive = true
+        policy.powerSource = .external
+        #expect(!policy.shouldPlay)
+
+        policy.sessionInactive = false
+        policy.lowPowerMode = true
+        #expect(!policy.shouldPlay)
+        policy.pauseInLowPowerMode = false
+        #expect(policy.shouldPlay)
+
+        policy.powerSource = .battery
+        policy.animateOnBattery = false
+        #expect(!policy.shouldPlay, "Disabling low-power pause does not override the battery profile.")
+    }
+
+    @Test
     func testManualPauseSurvivesSleepAndWake() {
         var policy = PlaybackPolicy()
         policy.userPaused = true

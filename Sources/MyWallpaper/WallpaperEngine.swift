@@ -10,6 +10,7 @@ final class WallpaperEngine: ObservableObject {
     @Published private(set) var isPausedForOcclusion = false
 
     var onPlaybackError: ((String) -> Void)?
+    private(set) var posterImage: CGImage?
 
     private var asset: AVURLAsset?
     private var surfaces: [WallpaperSurface] = []
@@ -39,7 +40,18 @@ final class WallpaperEngine: ObservableObject {
         }
         guard !selectedScreens.isEmpty else { throw WallpaperError.noDisplay }
 
+        // A paused AVPlayerLayer need not have rendered a first frame yet.
+        // Prepare one image before replacing the current wallpaper so a cold
+        // static start never depends on briefly playing the video.
+        let generator = AVAssetImageGenerator(asset: candidate)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 3_840, height: 2_160)
+        let poster = try await generator.image(at: .zero).image
+        try Task.checkCancellation()
+        guard generation == loadGeneration else { throw CancellationError() }
+
         asset = candidate
+        posterImage = poster
         hasWallpaper = true
         observeScreensIfNeeded()
         rebuildSurfaces()
@@ -77,6 +89,7 @@ final class WallpaperEngine: ObservableObject {
         playbackEnabled = false
         disposeSurfaces()
         asset = nil
+        posterImage = nil
         hasWallpaper = false
         isPlaying = false
         if let screenObserver {
@@ -105,7 +118,7 @@ final class WallpaperEngine: ObservableObject {
     }
 
     private func rebuildSurfaces() {
-        guard let asset else { return }
+        guard let asset, let posterImage else { return }
         surfaceGeneration += 1
         let generation = surfaceGeneration
         disposeSurfaces()
@@ -113,6 +126,7 @@ final class WallpaperEngine: ObservableObject {
         for (index, screen) in selectedScreens.enumerated() {
             let surface = WallpaperSurface(
                 asset: asset,
+                posterImage: posterImage,
                 screen: screen,
                 scaling: scaling,
                 isMuted: isMuted || index != 0,
@@ -190,6 +204,7 @@ private final class WallpaperSurface {
 
     init(
         asset: AVURLAsset,
+        posterImage: CGImage,
         screen: NSScreen,
         scaling: VideoScaling,
         isMuted: Bool,
@@ -206,8 +221,9 @@ private final class WallpaperSurface {
         player.preventsDisplaySleepDuringVideoPlayback = false
         looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(asset: asset))
         videoView = WallpaperVideoView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        videoView.posterLayer.contents = posterImage
         videoView.playerLayer.player = player
-        videoView.playerLayer.videoGravity = scaling == .fill ? .resizeAspectFill : .resizeAspect
+        videoView.configure(scaling: scaling)
 
         window = DesktopWindow(
             contentRect: screen.frame,
@@ -264,7 +280,7 @@ private final class WallpaperSurface {
 
     func configure(scaling: VideoScaling, isMuted: Bool, pauseWhenCovered: Bool) {
         player.isMuted = isMuted
-        videoView.playerLayer.videoGravity = scaling == .fill ? .resizeAspectFill : .resizeAspect
+        videoView.configure(scaling: scaling)
         self.pauseWhenCovered = pauseWhenCovered
         applyPlaybackPolicy()
     }
@@ -320,6 +336,12 @@ private final class WallpaperSurface {
     }
 
     private func observePlayback() {
+        observations.append(videoView.playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.disposed else { return }
+                self.videoView.updateVideoReadiness()
+            }
+        })
         observations.append(player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in
                 guard let self, !self.disposed else { return }
@@ -368,13 +390,46 @@ private final class DesktopWindow: NSWindow {
 @MainActor
 private final class WallpaperVideoView: NSView {
     let playerLayer = AVPlayerLayer()
+    let posterLayer = CALayer()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer = playerLayer
-        playerLayer.backgroundColor = NSColor.black.cgColor
+        layer = CALayer()
+        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.masksToBounds = true
+        posterLayer.name = "wallpaper.poster"
+        playerLayer.name = "wallpaper.video"
+        posterLayer.masksToBounds = true
+        playerLayer.isHidden = true
+        layer?.addSublayer(posterLayer)
+        layer?.addSublayer(playerLayer)
+        posterLayer.frame = bounds
+        playerLayer.frame = bounds
     }
 
     required init?(coder: NSCoder) { nil }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        posterLayer.frame = bounds
+        playerLayer.frame = bounds
+        CATransaction.commit()
+    }
+
+    func configure(scaling: VideoScaling) {
+        playerLayer.videoGravity = scaling == .fill ? .resizeAspectFill : .resizeAspect
+        posterLayer.contentsGravity = scaling == .fill ? .resizeAspectFill : .resizeAspect
+    }
+
+    func updateVideoReadiness() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let ready = playerLayer.isReadyForDisplay
+        playerLayer.isHidden = !ready
+        posterLayer.isHidden = ready
+        CATransaction.commit()
+    }
 }

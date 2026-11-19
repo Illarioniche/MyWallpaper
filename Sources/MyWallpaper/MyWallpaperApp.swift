@@ -16,6 +16,7 @@ enum MyWallpaperApp {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model = WallpaperModel()
+    private let navigation = AppNavigation()
     private var statusItem: NSStatusItem?
     private var controlWindow: NSWindow?
     private var openedFile = false
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         launchedAtLogin = launchedAtLogin || LoginItemController.wasLaunchedAtLogin()
         buildMainMenu()
         settings.onError = { [weak self] in self?.showWindow() }
+        settings.onOpenSettings = { [weak self] in self?.showSettings() }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "play.rectangle", accessibilityDescription: "MyWallpaper")
         item.button?.toolTip = "MyWallpaper — живые обои"
@@ -52,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url = urls.first else { return }
         openedFile = true
+        navigation.section = .wallpaper
         model.selectVideo(url)
         showWindow()
     }
@@ -69,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         addItem("Открыть MyWallpaper…", action: #selector(showWindow), to: menu)
         addItem("Выбрать видео…", action: #selector(chooseVideo), key: "o", to: menu)
-        let playback = addItem(model.hasWallpaper && !model.userPaused ? "Пауза" : "Включить обои",
+        let playback = addItem(model.hasWallpaper ? model.playbackButtonTitle : "Включить обои",
                               action: #selector(togglePlayback), to: menu)
         playback.isEnabled = !model.isLoading && model.selectedURL != nil
         let stop = addItem("Выключить обои", action: #selector(stopWallpaper), to: menu)
@@ -85,19 +88,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showWindow() {
         if controlWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 560),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 720),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
             window.title = "MyWallpaper"
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.isReleasedWhenClosed = false
-            window.contentMinSize = NSSize(width: 720, height: 520)
-            window.backgroundColor = NSColor(calibratedRed: 0.065, green: 0.075, blue: 0.085, alpha: 1)
-            window.contentView = NSHostingView(rootView: ControlView(model: model, onOpenSettings: { [weak self] in
-                self?.showSettingsMenu()
-            }).padding(.top, 24)
-                .background(Color(red: 0.065, green: 0.075, blue: 0.085)))
+            window.contentMinSize = NSSize(width: 820, height: 604)
+            window.backgroundColor = .windowBackgroundColor
+            window.contentView = NSHostingView(rootView: ControlView(model: model, navigation: navigation)
+                .padding(.top, 24).background(Color(nsColor: .windowBackgroundColor)))
             window.center()
             window.setFrameAutosaveName("MyWallpaperControls")
             controlWindow = window
@@ -106,15 +107,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controlWindow?.makeKeyAndOrderFront(nil)
     }
 
-    @objc private func chooseVideo() { model.chooseVideo() }
+    @objc private func chooseVideo() {
+        navigation.section = .wallpaper
+        model.chooseVideo()
+    }
     @objc private func togglePlayback() { model.togglePlayback() }
     @objc private func stopWallpaper() { model.stop() }
     @objc private func quit() { NSApp.terminate(nil) }
 
-    @objc private func showSettingsMenu() {
-        guard let button = statusItem?.button else { return }
-        let menu = settings.makeMenu()
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+    @objc private func showSettings() {
+        navigation.section = .general
+        showWindow()
     }
 
     @discardableResult
@@ -130,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         addItem("О MyWallpaper", action: #selector(showWindow), to: appMenu)
-        addItem("Настройки…", action: #selector(showSettingsMenu), key: ",", to: appMenu)
+        addItem("Настройки…", action: #selector(showSettings), key: ",", to: appMenu)
         appMenu.addItem(.separator())
         addItem("Завершить MyWallpaper", action: #selector(quit), key: "q", to: appMenu)
         appItem.submenu = appMenu

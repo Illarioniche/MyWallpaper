@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 final class WallpaperModel: ObservableObject {
     let engine = WallpaperEngine()
     let loginItems: LoginItemController
+    private let powerMonitor: any PowerSourceMonitoring
     private let preferences: WallpaperPreferences
     private var policy = PlaybackPolicy()
     private var subscriptions = Set<AnyCancellable>()
@@ -23,6 +24,7 @@ final class WallpaperModel: ObservableObject {
     @Published private(set) var isPausedForOcclusion = false
     @Published private(set) var userPaused: Bool
     @Published private(set) var pauseReason: String?
+    @Published private(set) var powerSource: PowerSource
     @Published var errorMessage: String?
 
     @Published var target: DisplayTarget {
@@ -47,6 +49,30 @@ final class WallpaperModel: ObservableObject {
     @Published var pauseWhenCovered: Bool {
         didSet { preferences.pauseWhenCovered = pauseWhenCovered; configureEngine() }
     }
+    @Published var animateOnExternalPower: Bool {
+        didSet {
+            preferences.animateOnExternalPower = animateOnExternalPower
+            policy.animateOnExternalPower = animateOnExternalPower
+            updatePlayback()
+        }
+    }
+    @Published var animateOnBattery: Bool {
+        didSet {
+            preferences.animateOnBattery = animateOnBattery
+            policy.animateOnBattery = animateOnBattery
+            updatePlayback()
+        }
+    }
+
+    var playbackButtonTitle: String {
+        if !hasWallpaper { return "Включить" }
+        if userPaused { return "Продолжить" }
+        return policy.animatesOnCurrentPowerSource ? "Пауза" : "Оживить"
+    }
+
+    var playbackButtonSymbol: String {
+        hasWallpaper && !userPaused && policy.animatesOnCurrentPowerSource ? "pause.fill" : "play.fill"
+    }
 
     var status: String {
         if isLoading { return "Загружаем видео…" }
@@ -57,19 +83,28 @@ final class WallpaperModel: ObservableObject {
     }
 
     init(preferences: WallpaperPreferences = WallpaperPreferences(),
-         loginItems: LoginItemController? = nil) {
+         loginItems: LoginItemController? = nil,
+         powerMonitor: (any PowerSourceMonitoring)? = nil) {
         self.preferences = preferences
         self.loginItems = loginItems ?? LoginItemController()
+        let monitor = powerMonitor ?? PowerSourceMonitor()
+        self.powerMonitor = monitor
+        powerSource = monitor.source
         target = preferences.target
         scaling = preferences.scaling
         isMuted = preferences.isMuted
         pauseInLowPowerMode = preferences.pauseInLowPowerMode
         pauseWhenCovered = preferences.pauseWhenCovered
         restoreOnLaunch = preferences.restoreOnLaunch
+        animateOnExternalPower = preferences.animateOnExternalPower
+        animateOnBattery = preferences.animateOnBattery
         userPaused = preferences.userPaused
         policy.userPaused = preferences.userPaused
         policy.pauseInLowPowerMode = preferences.pauseInLowPowerMode
         policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        policy.powerSource = monitor.source
+        policy.animateOnExternalPower = preferences.animateOnExternalPower
+        policy.animateOnBattery = preferences.animateOnBattery
         if let session = CGSessionCopyCurrentDictionary() as? [String: Any] {
             policy.sessionInactive = !(session[kCGSessionOnConsoleKey as String] as? Bool ?? true)
         }
@@ -77,6 +112,15 @@ final class WallpaperModel: ObservableObject {
         engine.$hasWallpaper.assign(to: &$hasWallpaper)
         engine.$isPlaying.assign(to: &$isPlaying)
         engine.$isPausedForOcclusion.assign(to: &$isPausedForOcclusion)
+        monitor.sourcePublisher
+            .removeDuplicates()
+            .sink { [weak self] source in
+                guard let self else { return }
+                self.powerSource = source
+                self.policy.powerSource = source
+                self.updatePlayback()
+            }
+            .store(in: &subscriptions)
         self.loginItems.$errorMessage
             .sink { [weak self] message in
                 guard let self else { return }
@@ -179,7 +223,7 @@ final class WallpaperModel: ObservableObject {
                 self.releaseScope()
                 if acquiredScope { self.scopedURL = url; retainedScope = true }
                 self.selectedURL = url
-                self.thumbnail = nil
+                self.thumbnail = self.engine.posterImage.map { NSImage(cgImage: $0, size: .zero) }
                 self.preferences.videoBookmark = bookmark
                 self.preferences.wallpaperEnabled = true
                 if !preservePause {
@@ -189,9 +233,6 @@ final class WallpaperModel: ObservableObject {
                 }
                 self.updatePlayback()
                 self.isLoading = false
-                let image = await Self.makeThumbnail(url)
-                guard !Task.isCancelled, self.loadID == requestID else { return }
-                self.thumbnail = image
             } catch is CancellationError {
                 // A later selection or Stop owns the state now.
             } catch {
@@ -203,13 +244,28 @@ final class WallpaperModel: ObservableObject {
 
     func togglePlayback() {
         if !hasWallpaper {
-            if let selectedURL { selectVideo(selectedURL) } else { chooseVideo() }
+            if let selectedURL {
+                enableAnimationForCurrentPowerSource()
+                selectVideo(selectedURL)
+            } else { chooseVideo() }
             return
         }
-        userPaused.toggle()
+        if userPaused || !policy.animatesOnCurrentPowerSource {
+            // An explicit Play also opts this source into animation. Changing
+            // the source later still uses its own saved setting.
+            enableAnimationForCurrentPowerSource()
+            userPaused = false
+        } else {
+            userPaused = true
+        }
         policy.userPaused = userPaused
         preferences.userPaused = userPaused
         updatePlayback()
+    }
+
+    private func enableAnimationForCurrentPowerSource() {
+        if powerSource == .battery { animateOnBattery = true }
+        else { animateOnExternalPower = true }
     }
 
     func stop() {
