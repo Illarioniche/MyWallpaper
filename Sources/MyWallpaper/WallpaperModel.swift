@@ -1,0 +1,259 @@
+import AppKit
+import AVFoundation
+import Combine
+import UniformTypeIdentifiers
+
+@MainActor
+final class WallpaperModel: ObservableObject {
+    let engine = WallpaperEngine()
+    private let preferences: WallpaperPreferences
+    private var policy = PlaybackPolicy()
+    private var subscriptions = Set<AnyCancellable>()
+    private var loadingTask: Task<Void, Never>?
+    private var loadID = UUID()
+    private var scopedURL: URL?
+
+    @Published private(set) var selectedURL: URL?
+    @Published private(set) var thumbnail: NSImage?
+    @Published private(set) var isLoading = false
+    @Published private(set) var hasWallpaper = false
+    @Published private(set) var isPlaying = false
+    @Published private(set) var userPaused: Bool
+    @Published private(set) var pauseReason: String?
+    @Published var errorMessage: String?
+
+    @Published var target: DisplayTarget {
+        didSet { preferences.target = target; configureEngine() }
+    }
+    @Published var scaling: VideoScaling {
+        didSet { preferences.scaling = scaling; configureEngine() }
+    }
+    @Published var isMuted: Bool {
+        didSet { preferences.isMuted = isMuted; configureEngine() }
+    }
+    @Published var pauseInLowPowerMode: Bool {
+        didSet {
+            preferences.pauseInLowPowerMode = pauseInLowPowerMode
+            policy.pauseInLowPowerMode = pauseInLowPowerMode
+            updatePlayback()
+        }
+    }
+    @Published var restoreOnLaunch: Bool {
+        didSet { preferences.restoreOnLaunch = restoreOnLaunch }
+    }
+
+    var status: String {
+        if isLoading { return "Загружаем видео…" }
+        if !hasWallpaper { return selectedURL == nil ? "Выбери своё настроение" : "Обои выключены" }
+        return pauseReason ?? (isPlaying ? "Обои воспроизводятся" : "Подготовка видео…")
+    }
+
+    init(preferences: WallpaperPreferences = WallpaperPreferences()) {
+        self.preferences = preferences
+        target = preferences.target
+        scaling = preferences.scaling
+        isMuted = preferences.isMuted
+        pauseInLowPowerMode = preferences.pauseInLowPowerMode
+        restoreOnLaunch = preferences.restoreOnLaunch
+        userPaused = preferences.userPaused
+        policy.userPaused = preferences.userPaused
+        policy.pauseInLowPowerMode = preferences.pauseInLowPowerMode
+        policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any] {
+            policy.sessionInactive = !(session[kCGSessionOnConsoleKey as String] as? Bool ?? true)
+        }
+
+        engine.$hasWallpaper.assign(to: &$hasWallpaper)
+        engine.$isPlaying.assign(to: &$isPlaying)
+        engine.onPlaybackError = { [weak self] message in
+            guard let self else { return }
+            self.errorMessage = message
+            self.preferences.wallpaperEnabled = false
+        }
+        configureEngine()
+        observeSystem()
+        updatePlayback()
+    }
+
+    func restore() {
+        guard let bookmark = preferences.videoBookmark else { return }
+        do {
+            var stale = false
+            let url = try URL(resolvingBookmarkData: bookmark,
+                              options: [.withoutUI],
+                              relativeTo: nil, bookmarkDataIsStale: &stale)
+            let acquiredScope = url.startAccessingSecurityScopedResource()
+            var retainedScope = false
+            defer {
+                if acquiredScope && !retainedScope { url.stopAccessingSecurityScopedResource() }
+            }
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            if stale {
+                preferences.videoBookmark = try url.bookmarkData(
+                    options: [],
+                    includingResourceValuesForKeys: nil, relativeTo: nil)
+            }
+            if preferences.restoreOnLaunch && preferences.wallpaperEnabled {
+                selectVideo(url, preservePause: true)
+            } else {
+                selectedURL = url
+                if acquiredScope { scopedURL = url; retainedScope = true }
+                loadingTask = Task { [weak self] in
+                    let image = await Self.makeThumbnail(url)
+                    guard !Task.isCancelled else { return }
+                    self?.thumbnail = image
+                }
+            }
+        } catch {
+            errorMessage = "Не удалось найти сохранённое видео. Возможно, файл перемещён или диск отключён. Выбери его заново."
+        }
+    }
+
+    func chooseVideo() {
+        let panel = NSOpenPanel()
+        panel.title = "Выбери живые обои"
+        panel.prompt = "Установить обои"
+        panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie, .movie]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = selectedURL?.deletingLastPathComponent()
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in self?.selectVideo(url) }
+        }
+    }
+
+    func selectVideo(_ url: URL, preservePause: Bool = false) {
+        guard url.isFileURL else {
+            errorMessage = "Выбери видео, сохранённое на этом Mac."
+            return
+        }
+        loadingTask?.cancel()
+        let requestID = UUID()
+        loadID = requestID
+        isLoading = true
+        errorMessage = nil
+        loadingTask = Task { [weak self] in
+            guard let self else { return }
+            let acquiredScope = url.startAccessingSecurityScopedResource()
+            var retainedScope = false
+            defer {
+                if acquiredScope && !retainedScope { url.stopAccessingSecurityScopedResource() }
+                if self.loadID == requestID { self.isLoading = false }
+            }
+            do {
+                // Prepare the bookmark before changing playback, preserving the previous file on failure.
+                // This local app is not App Sandbox-enabled; regular bookmarks track moved files
+                // without requiring the security-scoped bookmark service.
+                let bookmark = try url.bookmarkData(options: [],
+                                                    includingResourceValuesForKeys: nil, relativeTo: nil)
+                try await self.engine.load(url: url)
+                try Task.checkCancellation()
+                guard self.loadID == requestID else { return }
+                self.releaseScope()
+                if acquiredScope { self.scopedURL = url; retainedScope = true }
+                self.selectedURL = url
+                self.thumbnail = nil
+                self.preferences.videoBookmark = bookmark
+                self.preferences.wallpaperEnabled = true
+                if !preservePause {
+                    self.userPaused = false
+                    self.policy.userPaused = false
+                    self.preferences.userPaused = false
+                }
+                self.updatePlayback()
+                self.isLoading = false
+                let image = await Self.makeThumbnail(url)
+                guard !Task.isCancelled, self.loadID == requestID else { return }
+                self.thumbnail = image
+            } catch is CancellationError {
+                // A later selection or Stop owns the state now.
+            } catch {
+                guard self.loadID == requestID else { return }
+                self.errorMessage = "Не удалось открыть видео. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func togglePlayback() {
+        if !hasWallpaper {
+            if let selectedURL { selectVideo(selectedURL) } else { chooseVideo() }
+            return
+        }
+        userPaused.toggle()
+        policy.userPaused = userPaused
+        preferences.userPaused = userPaused
+        updatePlayback()
+    }
+
+    func stop() {
+        loadingTask?.cancel()
+        loadID = UUID()
+        isLoading = false
+        engine.stop()
+        preferences.wallpaperEnabled = false
+        releaseScope()
+    }
+
+    func shutDown() {
+        loadingTask?.cancel()
+        engine.stop()
+        releaseScope()
+    }
+
+    func revealVideo() {
+        if let selectedURL { NSWorkspace.shared.activateFileViewerSelecting([selectedURL]) }
+    }
+
+    private func releaseScope() {
+        scopedURL?.stopAccessingSecurityScopedResource()
+        scopedURL = nil
+    }
+
+    private func configureEngine() {
+        engine.configure(target: target, scaling: scaling, isMuted: isMuted)
+    }
+
+    private func updatePlayback() {
+        pauseReason = policy.pauseReason
+        engine.setPlaybackEnabled(policy.shouldPlay)
+    }
+
+    private func observeSystem() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        observe(workspace, NSWorkspace.willSleepNotification) { $0.policy.systemSleeping = true }
+        observe(workspace, NSWorkspace.didWakeNotification) { $0.policy.systemSleeping = false }
+        observe(workspace, NSWorkspace.screensDidSleepNotification) { $0.policy.screensSleeping = true }
+        observe(workspace, NSWorkspace.screensDidWakeNotification) { $0.policy.screensSleeping = false }
+        observe(workspace, NSWorkspace.sessionDidResignActiveNotification) { $0.policy.sessionInactive = true }
+        observe(workspace, NSWorkspace.sessionDidBecomeActiveNotification) { $0.policy.sessionInactive = false }
+        observe(.default, .NSProcessInfoPowerStateDidChange) {
+            $0.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+    }
+
+    private func observe(_ center: NotificationCenter, _ name: Notification.Name,
+                         change: @escaping @MainActor (WallpaperModel) -> Void) {
+        center.publisher(for: name)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    change(self)
+                    self.updatePlayback()
+                }
+            }
+            .store(in: &subscriptions)
+    }
+
+    private static func makeThumbnail(_ url: URL) async -> NSImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 1_280, height: 720)
+        guard let result = try? await generator.image(at: .zero), !Task.isCancelled else { return nil }
+        return NSImage(cgImage: result.image, size: .zero)
+    }
+}
