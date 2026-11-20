@@ -194,8 +194,8 @@ open dist/MyWallpaper.app
 ```text
 dist/
 ├── MyWallpaper.app
-├── MyWallpaper-0.7.0-universal.dmg
-└── MyWallpaper-0.7.0-universal.dmg.sha256
+├── MyWallpaper-0.8.0-universal.dmg
+└── MyWallpaper-0.8.0-universal.dmg.sha256
 ```
 
 Внутри образа находятся приложение, ссылка на папку «Программы» и краткая инструкция. Версия берётся из `Info.plist`, архитектура — из готового исполняемого файла. Для упаковки уже собранного приложения без повторной компиляции:
@@ -209,7 +209,7 @@ dist/
 Проверка скачанного образа из каталога с обоими файлами:
 
 ```sh
-shasum -a 256 -c MyWallpaper-0.7.0-universal.dmg.sha256
+shasum -a 256 -c MyWallpaper-0.8.0-universal.dmg.sha256
 ```
 
 Universal-сборка включает Intel, но текущая проверка запуска выполнялась на Apple Silicon. Для распространения с подтверждённым разработчиком отдельно потребуются Developer ID и нотарификация Apple.
