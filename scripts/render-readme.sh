@@ -10,20 +10,27 @@ if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--prepare-only" && "$1" != "--copy-imag
     exit 2
 fi
 
-# Copy only the four reviewed README assets; never replace the verification renders.
+# Copy the reviewed localized README assets; never replace verification renders.
 if [[ "${1:-}" == "--copy-images" ]]; then
-    for source in "$OUTPUT_DIR/app-icon.png" \
-        "$OUTPUT_DIR/ui/ui-wallpaper-light.png" \
-        "$OUTPUT_DIR/ui/ui-wallpaper-dark.png" \
-        "$OUTPUT_DIR/ui/ui-power-light.png"; do
+    images=()
+    for language in ru en; do
+        for theme in light dark; do
+            for scene in wallpaper wallpaper-editor power wallpaper-power-exception; do
+                images+=("$scene-$language-$theme.png")
+            done
+        done
+    done
+    [[ -f "$OUTPUT_DIR/app-icon.png" ]] || { echo "Missing prepared app icon." >&2; exit 1; }
+    for name in "${images[@]}"; do
+        source="$OUTPUT_DIR/ui/readme-$name"
         [[ -f "$source" ]] || { echo "Missing prepared image: $source" >&2; exit 1; }
     done
     mkdir -p "$PROJECT_DIR/docs/images"
     cp "$OUTPUT_DIR/app-icon.png" "$PROJECT_DIR/docs/images/app-icon.png"
-    cp "$OUTPUT_DIR/ui/ui-wallpaper-light.png" "$PROJECT_DIR/docs/images/wallpaper-light.png"
-    cp "$OUTPUT_DIR/ui/ui-wallpaper-dark.png" "$PROJECT_DIR/docs/images/wallpaper-dark.png"
-    cp "$OUTPUT_DIR/ui/ui-power-light.png" "$PROJECT_DIR/docs/images/power-light.png"
-    echo "Copied four reviewed images to docs/images."
+    for name in "${images[@]}"; do
+        cp "$OUTPUT_DIR/ui/readme-$name" "$PROJECT_DIR/docs/images/$name"
+    done
+    echo "Copied app icon and 16 reviewed screenshots to docs/images."
     exit 0
 fi
 
