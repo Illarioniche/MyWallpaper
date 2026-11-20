@@ -54,9 +54,9 @@
 
 Under **General → App Language**, choose **System**, **Русский**, or **English**. Your choice is saved and takes effect immediately, without restarting the app. System mode uses the first supported language in your macOS preferred-language list, falling back to English if none match.
 
-In **Audio**, adjust the volume from **0 to 100%**. **Mute** works independently: it temporarily silences the video while keeping your chosen volume. A volume of **0%** is also silent, even when Mute is off.
+In **Wallpaper → Configure → Audio**, adjust the volume from **0 to 100%**. **Mute** works independently: it temporarily silences the video while keeping your chosen volume. A volume of **0%** is also silent, even when Mute is off.
 
-Under **Wallpaper → Appearance**, you can enable **System Wallpaper from Video**; it is off by default. The app saves a frame from the selected video as a still macOS wallpaper and updates it when you change the video, scaling, selected displays, or connected monitors. The frame applies to the current desktop on the selected displays; macOS may turn off Show on All Spaces when it is updated. You can turn that option back on manually in macOS Wallpaper settings if desired. Automatic application to every Space and display on the lock screen are not guaranteed. MyWallpaper continues to provide the animation. Turning this setting off stops future updates and leaves the last saved frame in place.
+Under **Wallpaper → Configure → Appearance**, you can enable **System Wallpaper from Video**; it is off by default. The app saves a frame from the selected video as a still macOS wallpaper and updates it when you change the video, scaling, selected displays, or connected monitors. The frame applies to the current desktop on the selected displays; macOS may turn off Show on All Spaces when it is updated. You can turn that option back on manually in macOS Wallpaper settings if desired. Automatic application to every Space and display on the lock screen are not guaranteed. MyWallpaper continues to provide the animation. Turning this setting off stops future updates and leaves the last saved frame in place.
 
 Closing the window keeps the wallpaper running in the menu bar. **Pause** preserves the current frame; **Turn Off** stops the video and reveals your regular macOS wallpaper. If you saved a system wallpaper frame from the video, that frame stays after you stop playback or quit the app.
 
@@ -70,7 +70,11 @@ The **Wallpaper** section contains **My Wallpapers**. Adding a video saves a sep
 - **⋯ → Configure** opens that entry's display, scaling, mute and volume, animation on external power and battery, covered-desktop and Low Power Mode pauses, and system wallpaper sync settings. **Save** updates the entry and immediately applies changes if it is currently selected. Configuring another entry does not switch the current wallpaper.
 - **⋯ → Rename** changes the card's name. **Delete** asks for confirmation, then removes the entry and its internal video copy. The original video is preserved. Deleting the selected wallpaper stops playback and prevents that entry from being restored at launch. Any previously saved system wallpaper frame remains.
 
-Changes in **General**, **Power**, the current wallpaper controls, and the menu bar take effect immediately and persist as the app's current settings. To store them in the selected library entry, click **Save Current Settings** above the collection. Otherwise, choosing **Apply** again restores the settings saved in that entry.
+The card, current wallpaper panel and menu bar open the same **Configure** editor. For the active wallpaper it shows the current values; for another video it shows its saved settings. **Save** stores changes, while **Cancel** keeps the existing settings. Quick mute commands also remember their state across app launches.
+
+**Power** defines common rules for external power, battery, Low Power Mode and desktop coverage. New wallpapers follow these rules. To make an exception, turn off **Use Shared Rules** in that wallpaper’s editor and choose its own modes. Switching wallpapers never changes the common rules.
+
+On upgrade, previous power preferences seed the common rules, while saved power settings in existing cards remain individual exceptions. Current settings of the active wallpaper that had not been saved to its card are also restored and can be saved through the unified editor. Original videos and saved presets are not automatically overwritten.
 
 After an update, an existing wallpaper continues to work as before; the app does not copy it automatically. Choose **Save Current Wallpaper** to add it to the library with its current settings.
 
@@ -194,8 +198,8 @@ This command builds a universal app and creates a compressed disk image for drag
 ```text
 dist/
 ├── MyWallpaper.app
-├── MyWallpaper-0.8.0-universal.dmg
-└── MyWallpaper-0.8.0-universal.dmg.sha256
+├── MyWallpaper-0.9.0-universal.dmg
+└── MyWallpaper-0.9.0-universal.dmg.sha256
 ```
 
 The image contains the app, a link to Applications, and brief installation instructions. The version comes from `Info.plist`; the architecture comes from the built executable. To package an existing build without recompiling:
@@ -209,7 +213,7 @@ The filename reflects the actual architectures: `universal`, `arm64`, or `x86_64
 To verify a downloaded image, run this from the directory containing both files:
 
 ```sh
-shasum -a 256 -c MyWallpaper-0.8.0-universal.dmg.sha256
+shasum -a 256 -c MyWallpaper-0.9.0-universal.dmg.sha256
 ```
 
 The universal build includes Intel, but launch validation has been performed on Apple Silicon. Distribution with a verified developer identity separately requires Developer ID signing and Apple notarization.
@@ -233,7 +237,7 @@ The demo MP4 and intermediate images are saved in `.build/readme/`; the video is
 ### Detailed usage
 
 1. Click **Choose Video** or drag an MP4/MOV into the app window.
-2. Choose a section in the sidebar: **Wallpaper**, **General**, **Power**, **Screen Saver**, or **Updates**. These contain video selection, display, and scaling; startup and audio settings; power behavior; the system screen saver library; and update checks and downloads.
+2. Choose a section in the sidebar: **Wallpaper**, **General**, **Power**, **Screen Saver**, or **Updates**. These contain the wallpaper library and unified editor; startup and language settings; common power rules; the system screen saver library; and update checks and downloads.
 3. Control playback from the window or menu bar icon. Closing the window leaves the wallpaper running.
 4. Pause stops the video on its current frame. Turning the wallpaper off or quitting restores your regular desktop.
 
@@ -245,15 +249,15 @@ Playback pauses while the display is asleep or the session is inactive. Automati
 
 In **Power**, **Animate on External Power** is enabled by default and **Animate on Battery** is disabled. A MacBook connected to power, including when its battery is fully charged, as well as a Mac mini or Mac Studio, uses the external-power setting. Switching to battery freezes the video on the current frame; connecting power resumes it. Both settings can be changed independently and are remembered across power changes and app launches.
 
-The **Animate** button enables animation for the current power source. A manual pause persists when connecting or disconnecting power; sleep, a hidden desktop, and Low Power Mode remain separate reasons to pause. When starting in still mode, the first frame appears without briefly playing the video. If macOS does not report the power source, the saved external-power setting applies.
+The **Animate Now** button temporarily enables animation until the power source changes, another wallpaper is selected, or playback is turned off. It does not change saved rules or the linked screen saver’s mode. A manual pause persists when connecting or disconnecting power; sleep, a hidden desktop, and Low Power Mode remain separate reasons to pause. When starting in still mode, the first frame appears without briefly playing the video. If macOS does not report the power source, the saved external-power setting applies.
 
-Quick settings in the menu bar stay synchronized with the main window. **Settings → Open Settings…** and `⌘,` open **General**.
+The menu bar provides wallpaper status, playback, stop, mute, and shortcuts to the unified editor and app settings. **Open Settings…** and `⌘,` open **General**.
 
-Use **Settings → Launch at Login** to enable system-managed startup. Enabling it also turns on restoration of the selected video. After login, the app starts in the menu bar without opening its control window. A manual pause and **Turn Off Wallpaper** are remembered for the next launch.
+Use **General → Launch at Login** to enable system-managed startup. Enabling it also turns on restoration of the selected video. After login, the app starts in the menu bar without opening its control window. A manual pause and **Turn Off Wallpaper** are remembered for the next launch.
 
-If macOS requires approval, the app shows a pending state and a link to System Settings. It refreshes the status when you open the menu, so external changes are reflected too. Missing registration can be retried; an error never overrides the actual system status. For regular use, first move the `.app` to Applications, open that copy, and enable launch at login there. If registration fails, see **Launch at login will not turn on** above.
+If macOS requires approval, the app shows a pending state and a link to System Settings. It refreshes the status when you open settings, so external changes are reflected too. Missing registration can be retried; an error never overrides the actual system status. For regular use, first move the `.app` to Applications, open that copy, and enable launch at login there. If registration fails, see **Launch at login will not turn on** above.
 
-**Pause When the Desktop Is Hidden** is enabled by default. Each display is handled separately: wallpaper fully covered by windows freezes on its last frame and resumes when the desktop becomes visible. A 16-point macOS margin allows small edge gaps from rounded windows. When only some displays are hidden, the status shows the number still playing, for example **Playing on 1 of 2 displays**. When all selected displays are hidden, it shows **Paused: desktop is hidden**. Manual pause, sleep, and Low Power Mode take priority over automatic resuming. You can disable this setting from the same menu. Coverage uses window bounds, not per-pixel transparency, so a maximized translucent window can also trigger a pause.
+**Pause When the Desktop Is Hidden** is enabled by default. Each display is handled separately: wallpaper fully covered by windows freezes on its last frame and resumes when the desktop becomes visible. A 16-point macOS margin allows small edge gaps from rounded windows. When only some displays are hidden, the status shows the number still playing, for example **Playing on 1 of 2 displays**. When all selected displays are hidden, it shows **Paused: desktop is hidden**. Manual pause, sleep, and Low Power Mode take priority over automatic resuming. You can disable this setting in **Power** or in an individual wallpaper’s rules. Coverage uses window bounds, not per-pixel transparency, so a maximized translucent window can also trigger a pause.
 
 ### Validation
 

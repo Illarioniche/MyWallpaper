@@ -4,24 +4,24 @@ import SwiftUI
 struct WallpaperLibraryPane: View {
     @ObservedObject var model: WallpaperModel
     @ObservedObject private var library: WallpaperLibraryController
+    private let onConfigure: (WallpaperLibraryEntry) -> Void
     @State private var sheet: Editor?
     @State private var pendingDeletion: WallpaperLibraryEntry?
     @State private var showsDeletion = false
     private var localizer: AppLocalizer { model.localizer }
 
-    init(model: WallpaperModel) {
+    init(model: WallpaperModel, onConfigure: @escaping (WallpaperLibraryEntry) -> Void) {
         self.model = model
         self.library = model.wallpaperLibrary
+        self.onConfigure = onConfigure
     }
 
     private enum Editor: Identifiable {
         case rename(WallpaperLibraryEntry)
-        case settings(WallpaperLibraryEntry)
 
         var id: String {
             switch self {
             case .rename(let entry): return "rename-\(entry.id)"
-            case .settings(let entry): return "settings-\(entry.id)"
             }
         }
     }
@@ -70,29 +70,6 @@ struct WallpaperLibraryPane: View {
                     .controlSize(.small).font(.system(size: 12))
             }
 
-            if let id = model.activeWallpaperID,
-               let entry = library.entries.first(where: { $0.id == id }),
-               model.currentWallpaperOptions != entry.options {
-                HStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(entry.name).font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1).truncationMode(.middle)
-                        Text(localizer.text("Текущие настройки отличаются от сохранённых."))
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                    Button(localizer.text("Сохранить текущие настройки")) {
-                        Task { await model.updateWallpaper(entry, options: model.currentWallpaperOptions) }
-                    }
-                    .controlSize(.small)
-                    .disabled(library.isWorking || model.isWorkingWithWallpapers || model.isLoading)
-                    .help(localizer.text("Сохранить экран, масштаб, звук и питание для этих обоев."))
-                }
-                .padding(14)
-                .background(Color.teal.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-            }
-
             if library.entries.isEmpty && (!library.isWorking || library.hasLoadedLibrary) {
                 VStack(spacing: 12) {
                     Image(systemName: "photo.stack.fill")
@@ -135,8 +112,6 @@ struct WallpaperLibraryPane: View {
             switch editor {
             case .rename(let entry):
                 WallpaperRenameSheet(model: model, library: library, entry: entry)
-            case .settings(let entry):
-                WallpaperOptionsSheet(model: model, library: library, entry: entry)
             }
         }
         .alert(localizer.text("Удалить обои?"), isPresented: $showsDeletion, presenting: pendingDeletion) { entry in
@@ -151,8 +126,8 @@ struct WallpaperLibraryPane: View {
 
     private func card(_ entry: WallpaperLibraryEntry) -> some View {
         let selected = model.activeWallpaperID == entry.id
-        let changed = selected && model.currentWallpaperOptions != entry.options
-        let applied = selected && model.hasWallpaper && !changed
+        let applied = selected && model.hasWallpaper
+        let usesGlobalPower = selected ? model.currentWallpaperOptions.usesGlobalPowerRules : entry.options.usesGlobalPowerRules
         return VStack(alignment: .leading, spacing: 0) {
             Button { model.applyWallpaper(entry) } label: {
                 VStack(alignment: .leading, spacing: 12) {
@@ -182,6 +157,12 @@ struct WallpaperLibraryPane: View {
                     }
                     .frame(minHeight: 32, alignment: .leading)
                     .padding(.horizontal, 14).padding(.bottom, 6)
+                    if !usesGlobalPower {
+                        Label(localizer.text("Свои правила питания"), systemImage: "slider.horizontal.3")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14).padding(.bottom, 6)
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -197,7 +178,7 @@ struct WallpaperLibraryPane: View {
                 Menu {
                     Button(localizer.text("Настроить…")) {
                         library.dismissFailure()
-                        sheet = .settings(entry)
+                        onConfigure(entry)
                     }
                     Button(localizer.text("Переименовать…")) {
                         library.dismissFailure()
@@ -282,24 +263,39 @@ private struct WallpaperRenameSheet: View {
 struct WallpaperOptionsSheet: View {
     @ObservedObject var model: WallpaperModel
     @ObservedObject var library: WallpaperLibraryController
-    let entry: WallpaperLibraryEntry
+    let entry: WallpaperLibraryEntry?
+    private let onOpenPower: (() -> Void)?
+    @State private var initialOptions: WallpaperLibraryOptions
+    @State private var initialVideoURL: URL?
+    @State private var wallpaperName: String
     @Environment(\.dismiss) private var dismiss
     @State private var options: WallpaperLibraryOptions
+    @State private var hasCustomPowerDraft: Bool
     @State private var isSaving = false
+    @State private var showsPowerNavigationConfirmation = false
+    @State private var saveError: String?
     private var localizer: AppLocalizer { model.localizer }
 
-    init(model: WallpaperModel, library: WallpaperLibraryController, entry: WallpaperLibraryEntry) {
+    init(model: WallpaperModel, library: WallpaperLibraryController, entry: WallpaperLibraryEntry?,
+         onOpenPower: (() -> Void)? = nil) {
         self.model = model
         self.library = library
         self.entry = entry
-        _options = State(initialValue: entry.options)
+        self.onOpenPower = onOpenPower
+        let initial = entry.map { model.editorOptions(for: $0) } ?? model.currentWallpaperOptions
+        _initialOptions = State(initialValue: initial)
+        _initialVideoURL = State(initialValue: model.selectedURL)
+        _wallpaperName = State(initialValue: entry?.name ?? model.selectedWallpaperName
+            ?? model.selectedURL?.deletingPathExtension().lastPathComponent ?? model.localizer.text("Текущие обои"))
+        _options = State(initialValue: initial)
+        _hasCustomPowerDraft = State(initialValue: !initial.usesGlobalPowerRules)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(localizer.text("Настройки обоев")).font(.system(size: 20, weight: .semibold))
-                Text(entry.name).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                Text(wallpaperName).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
             }
             .padding(24)
             Divider()
@@ -308,9 +304,21 @@ struct WallpaperOptionsSheet: View {
                     Text(localizer.text("Настройки сохранятся для этих обоев. Если они сейчас включены, изменения применятся сразу."))
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if model.hasLegacyCurrentSettings && (entry == nil || entry?.id == model.activeWallpaperID) {
+                        Text(localizer.text("Текущие настройки из предыдущей версии сохранены. Нажми «Сохранить», чтобы записать их для этих обоев."))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     appearance
                     audio
                     power
+                    if model.syncScreenSaver && (entry == nil || entry?.id == model.activeWallpaperID) {
+                        Label(localizer.text("Масштаб и действующие правила питания также используются связанной заставкой. Заставка всегда без звука."),
+                              systemImage: "link")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let saveError { Text(saveError).font(.system(size: 12)).foregroundStyle(.red) }
                     if let failure = library.failure {
                         WallpaperLibraryFailureView(failure: failure, localizer: localizer)
                     }
@@ -327,9 +335,19 @@ struct WallpaperOptionsSheet: View {
                 Button(localizer.text("Сохранить")) {
                     isSaving = true
                     Task {
-                        let saved = await model.updateWallpaper(entry, options: options)
+                        let saved: Bool
+                        saveError = nil
+                        if let entry {
+                            saved = await model.updateWallpaper(entry, options: options, originalOptions: initialOptions)
+                        } else if model.selectedURL == initialVideoURL {
+                            saved = await model.updateCurrentWallpaper(options: options, originalOptions: initialOptions, expectedURL: initialVideoURL)
+                        } else {
+                            saved = false
+                            saveError = localizer.text("Текущие обои изменились. Закрой окно и открой настройки выбранных обоев снова.")
+                        }
                         isSaving = false
                         if saved { dismiss() }
+                        else if saveError == nil { saveError = model.errorMessage }
                     }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -340,6 +358,17 @@ struct WallpaperOptionsSheet: View {
         .frame(width: 560, height: 560)
         .background(Color(nsColor: .windowBackgroundColor))
         .interactiveDismissDisabled(isSaving)
+        .alert(localizer.text("Перейти к общим правилам?"), isPresented: $showsPowerNavigationConfirmation) {
+            Button(localizer.text("Перейти без сохранения")) { openPower() }
+            Button(localizer.text("Отмена"), role: .cancel) {}
+        } message: {
+            Text(localizer.text("Изменения в этом окне ещё не сохранены."))
+        }
+    }
+
+    private func openPower() {
+        dismiss()
+        onOpenPower?()
     }
 
     private var appearance: some View {
@@ -384,22 +413,56 @@ struct WallpaperOptionsSheet: View {
     }
 
     private var power: some View {
-        SettingsGroup(title: localizer.text("Питание")) {
-            SettingsToggle(title: localizer.text("Анимация от сети"), symbol: "powerplug.fill", color: .teal,
-                           isOn: $options.animateOnExternalPower)
-            SettingsDivider()
-            SettingsToggle(title: localizer.text("Анимация от батареи"),
-                           detail: localizer.text("По умолчанию — статичный кадр для экономии энергии."),
-                           symbol: "battery.100", color: .orange, isOn: $options.animateOnBattery)
-            SettingsDivider()
-            SettingsToggle(title: localizer.text("Пауза в режиме энергосбережения"),
-                           detail: localizer.text("Учитывать режим энергосбережения macOS."),
-                           symbol: "leaf.fill", color: .green, isOn: $options.pauseInLowPowerMode)
-            SettingsDivider()
-            SettingsToggle(title: localizer.text("Пауза, когда рабочий стол скрыт"),
-                           symbol: "macwindow.on.rectangle", color: .blue, isOn: $options.pauseWhenCovered)
+        SettingsGroup(title: localizer.text("Правила питания")) {
+            SettingsToggle(title: localizer.text("Использовать общие правила"),
+                           detail: localizer.text("Из раздела «Питание». Изменение общих правил обновит эти обои."),
+                           symbol: "link", color: .teal,
+                           isOn: Binding(get: { options.usesGlobalPowerRules }, set: { inherited in
+                               // Keep custom values in the draft while shared rules are selected.
+                               // A new exception starts from the effective shared rules only once.
+                               if !inherited && !hasCustomPowerDraft {
+                                   options.powerRules = model.globalPowerRules
+                                   hasCustomPowerDraft = true
+                               }
+                               options.usesGlobalPowerRules = inherited
+                           }))
+            if options.usesGlobalPowerRules {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(localizer.format("От сети: %@ · От батареи: %@",
+                        localizer.text(model.globalPowerRules.animateOnExternalPower ? "Анимация" : "Статичный кадр"),
+                        localizer.text(model.globalPowerRules.animateOnBattery ? "Анимация" : "Статичный кадр")))
+                    Text(localizer.format("Пауза при скрытом столе: %@ · При энергосбережении: %@",
+                        localizer.text(model.globalPowerRules.pauseWhenCovered ? "Да" : "Нет"),
+                        localizer.text(model.globalPowerRules.pauseInLowPowerMode ? "Да" : "Нет")))
+                    if onOpenPower != nil {
+                        Button(localizer.text("Открыть общие правила…")) {
+                            if options != initialOptions { showsPowerNavigationConfirmation = true }
+                            else { openPower() }
+                        }
+                    }
+                }
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16).padding(.bottom, 16)
+            } else {
+                SettingsDivider()
+                SettingsToggle(title: localizer.text("Анимация от сети"), symbol: "powerplug.fill", color: .teal,
+                               isOn: $options.animateOnExternalPower)
+                SettingsDivider()
+                SettingsToggle(title: localizer.text("Анимация от батареи"),
+                               detail: localizer.text("Только для этих обоев."),
+                               symbol: "battery.100", color: .orange, isOn: $options.animateOnBattery)
+                SettingsDivider()
+                SettingsToggle(title: localizer.text("Пауза в режиме энергосбережения"),
+                               detail: localizer.text("Учитывать режим энергосбережения macOS."),
+                               symbol: "leaf.fill", color: .green, isOn: $options.pauseInLowPowerMode)
+                SettingsDivider()
+                SettingsToggle(title: localizer.text("Пауза, когда рабочий стол скрыт"),
+                               symbol: "macwindow.on.rectangle", color: .blue, isOn: $options.pauseWhenCovered)
+            }
         }
     }
+
 }
 
 @MainActor

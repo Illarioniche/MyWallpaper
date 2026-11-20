@@ -29,6 +29,10 @@ final class WallpaperModel: ObservableObject {
     private var libraryTask: Task<Void, Never>?
     private var libraryActionID = UUID()
     private var libraryActionCount = 0
+    private var appliedPowerRules = WallpaperPowerRules()
+    @Published private(set) var wallpaperPowerOverride: WallpaperPowerRules?
+    @Published private(set) var isTemporarilyAnimating = false
+    @Published private(set) var legacyCurrentWallpaperID: UUID?
 
     @Published private(set) var activeWallpaperID: UUID?
     @Published private(set) var isWorkingWithWallpapers = false
@@ -100,45 +104,36 @@ final class WallpaperModel: ObservableObject {
             configureEngine()
         }
     }
-    @Published var pauseInLowPowerMode: Bool {
-        didSet {
-            preferences.pauseInLowPowerMode = pauseInLowPowerMode
-            policy.pauseInLowPowerMode = pauseInLowPowerMode
-            updatePlayback()
-            if oldValue != pauseInLowPowerMode { synchronizeScreenSaver() }
-        }
-    }
+    // These four controls are the app-wide defaults. Applying a wallpaper only
+    // changes its optional override, never these values.
+    @Published var pauseInLowPowerMode: Bool { didSet { globalPowerRulesChanged() } }
     @Published var restoreOnLaunch: Bool {
         didSet { preferences.restoreOnLaunch = restoreOnLaunch }
     }
-    @Published var pauseWhenCovered: Bool {
-        didSet { preferences.pauseWhenCovered = pauseWhenCovered; configureEngine() }
+    @Published var pauseWhenCovered: Bool { didSet { globalPowerRulesChanged() } }
+    @Published var animateOnExternalPower: Bool { didSet { globalPowerRulesChanged() } }
+    @Published var animateOnBattery: Bool { didSet { globalPowerRulesChanged() } }
+
+    var globalPowerRules: WallpaperPowerRules {
+        WallpaperPowerRules(animateOnExternalPower: animateOnExternalPower,
+            animateOnBattery: animateOnBattery, pauseInLowPowerMode: pauseInLowPowerMode,
+            pauseWhenCovered: pauseWhenCovered)
     }
-    @Published var animateOnExternalPower: Bool {
-        didSet {
-            preferences.animateOnExternalPower = animateOnExternalPower
-            policy.animateOnExternalPower = animateOnExternalPower
-            updatePlayback()
-            if oldValue != animateOnExternalPower { synchronizeScreenSaver() }
-        }
-    }
-    @Published var animateOnBattery: Bool {
-        didSet {
-            preferences.animateOnBattery = animateOnBattery
-            policy.animateOnBattery = animateOnBattery
-            updatePlayback()
-            if oldValue != animateOnBattery { synchronizeScreenSaver() }
-        }
+    var effectivePowerRules: WallpaperPowerRules { wallpaperPowerOverride ?? globalPowerRules }
+    var activeWallpaperUsesGlobalPowerRules: Bool { wallpaperPowerOverride == nil }
+    var hasLegacyCurrentSettings: Bool {
+        legacyCurrentWallpaperID != nil && legacyCurrentWallpaperID == activeWallpaperID
     }
 
     var playbackButtonTitle: String {
         if !hasWallpaper { return localizer.text("Включить") }
         if userPaused { return localizer.text("Продолжить") }
-        return policy.animatesOnCurrentPowerSource ? localizer.text("Пауза") : localizer.text("Оживить")
+        return policy.animatesOnCurrentPowerSource || isTemporarilyAnimating
+            ? localizer.text("Пауза") : localizer.text("Оживить сейчас")
     }
 
     var playbackButtonSymbol: String {
-        hasWallpaper && !userPaused && policy.animatesOnCurrentPowerSource ? "pause.fill" : "play.fill"
+        hasWallpaper && !userPaused && (policy.animatesOnCurrentPowerSource || isTemporarilyAnimating) ? "pause.fill" : "play.fill"
     }
 
     var status: String {
@@ -161,6 +156,22 @@ final class WallpaperModel: ObservableObject {
          wallpaperLibrary: WallpaperLibraryController? = nil,
          screenSaverSync: ScreenSaverSyncController? = nil) {
         self.preferences = preferences
+        let hadGlobalRules = preferences.hasStoredGlobalPowerRules
+        let defaults = preferences.globalPowerRules
+        let cachedPower = WallpaperPowerRules(animateOnExternalPower: preferences.animateOnExternalPower,
+            animateOnBattery: preferences.animateOnBattery, pauseInLowPowerMode: preferences.pauseInLowPowerMode,
+            pauseWhenCovered: preferences.pauseWhenCovered)
+        // Keep the pre-upgrade current configuration and the saved preset intact.
+        // This marker survives relaunch and is cleared only by a deliberate Save
+        // or a successful selection, never a failed video load or library write.
+        let pendingLegacyID = preferences.legacyCurrentWallpaperID
+            ?? (!hadGlobalRules ? preferences.activeWallpaperID : nil)
+        legacyCurrentWallpaperID = pendingLegacyID
+        preferences.legacyCurrentWallpaperID = pendingLegacyID
+        let usesGlobal = preferences.currentWallpaperUsesGlobalPowerRules
+            ?? (pendingLegacyID == nil)
+        wallpaperPowerOverride = usesGlobal ? nil : cachedPower
+        if !hadGlobalRules { preferences.globalPowerRules = defaults }
         self.systemWallpaperSync = systemWallpaperSync ?? SystemWallpaperSync()
         self.loginItems = loginItems ?? LoginItemController()
         self.updates = updates ?? UpdateController()
@@ -178,11 +189,11 @@ final class WallpaperModel: ObservableObject {
         syncScreenSaver = preferences.syncScreenSaver
         isMuted = preferences.isMuted
         volume = preferences.volume
-        pauseInLowPowerMode = preferences.pauseInLowPowerMode
-        pauseWhenCovered = preferences.pauseWhenCovered
+        pauseInLowPowerMode = defaults.pauseInLowPowerMode
+        pauseWhenCovered = defaults.pauseWhenCovered
         restoreOnLaunch = preferences.restoreOnLaunch
-        animateOnExternalPower = preferences.animateOnExternalPower
-        animateOnBattery = preferences.animateOnBattery
+        animateOnExternalPower = defaults.animateOnExternalPower
+        animateOnBattery = defaults.animateOnBattery
         userPaused = preferences.userPaused
         policy.userPaused = preferences.userPaused
         policy.pauseInLowPowerMode = preferences.pauseInLowPowerMode
@@ -207,6 +218,7 @@ final class WallpaperModel: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] source in
                 guard let self else { return }
+                if self.powerSource != source { self.setTemporaryAnimation(false) }
                 self.powerSource = source
                 self.policy.powerSource = source
                 self.updatePlayback()
@@ -235,7 +247,7 @@ final class WallpaperModel: ObservableObject {
             self.errorMessage = self.renderError?(self.localizer)
             self.preferences.wallpaperEnabled = false
         }
-        configureEngine()
+        refreshEffectivePowerRules()
         observeSystem()
         updatePlayback()
     }
@@ -261,6 +273,7 @@ final class WallpaperModel: ObservableObject {
             }
             do {
                 let url = try self.wallpaperLibrary.videoURL(for: entry)
+                if !self.hasLegacyCurrentSettings { self.applyOptions(entry.options) }
                 if self.preferences.restoreOnLaunch && self.preferences.wallpaperEnabled {
                     self.selectVideo(url, preservePause: true, libraryEntry: entry, applySavedOptions: false)
                 } else {
@@ -293,7 +306,7 @@ final class WallpaperModel: ObservableObject {
                     includingResourceValuesForKeys: nil, relativeTo: nil)
             }
             if preferences.restoreOnLaunch && preferences.wallpaperEnabled {
-                selectVideo(url, preservePause: true)
+                selectVideo(url, preservePause: true, applySavedOptions: false)
             } else {
                 selectedURL = url
                 synchronizeScreenSaver()
@@ -330,7 +343,8 @@ final class WallpaperModel: ObservableObject {
     }
 
     func selectVideo(_ url: URL, preservePause: Bool = false,
-                     libraryEntry: WallpaperLibraryEntry? = nil, applySavedOptions: Bool = true) {
+                     libraryEntry: WallpaperLibraryEntry? = nil, applySavedOptions: Bool = true,
+                     temporarilyAnimate: Bool = false) {
         guard url.isFileURL else {
             reportError("Выбери видео, сохранённое на этом Mac.")
             return
@@ -375,6 +389,12 @@ final class WallpaperModel: ObservableObject {
                     let latest = self.wallpaperLibrary.entries.first { $0.id == libraryEntry.id } ?? libraryEntry
                     self.applyOptions(latest.options)
                 }
+                if libraryEntry == nil, applySavedOptions {
+                    self.wallpaperPowerOverride = nil
+                    self.refreshEffectivePowerRules()
+                }
+                self.setTemporaryAnimation(temporarilyAnimate && !self.permanentAnimationIsAllowed)
+                if applySavedOptions { self.clearLegacyCurrentSettings() }
                 if !preservePause {
                     self.userPaused = false
                     self.policy.userPaused = false
@@ -398,16 +418,13 @@ final class WallpaperModel: ObservableObject {
     func togglePlayback() {
         if !hasWallpaper {
             if let selectedURL {
-                enableAnimationForCurrentPowerSource()
                 let entry = activeWallpaperID.flatMap { id in wallpaperLibrary.entries.first { $0.id == id } }
-                selectVideo(selectedURL, libraryEntry: entry, applySavedOptions: false)
+                selectVideo(selectedURL, libraryEntry: entry, applySavedOptions: false, temporarilyAnimate: true)
             } else { chooseVideo() }
             return
         }
-        if userPaused || !policy.animatesOnCurrentPowerSource {
-            // An explicit Play also opts this source into animation. Changing
-            // the source later still uses its own saved setting.
-            enableAnimationForCurrentPowerSource()
+        if userPaused || (!policy.animatesOnCurrentPowerSource && !isTemporarilyAnimating) {
+            setTemporaryAnimation(!permanentAnimationIsAllowed)
             userPaused = false
         } else {
             userPaused = true
@@ -417,12 +434,17 @@ final class WallpaperModel: ObservableObject {
         updatePlayback()
     }
 
-    private func enableAnimationForCurrentPowerSource() {
-        if powerSource == .battery { animateOnBattery = true }
-        else { animateOnExternalPower = true }
+    private var permanentAnimationIsAllowed: Bool {
+        powerSource == .battery ? effectivePowerRules.animateOnBattery : effectivePowerRules.animateOnExternalPower
+    }
+
+    private func setTemporaryAnimation(_ enabled: Bool) {
+        isTemporarilyAnimating = enabled
+        policy.temporaryAnimationOverride = enabled
     }
 
     func stop() {
+        setTemporaryAnimation(false)
         let wasLoading = isLoading
         libraryActionID = UUID()
         loadingTask?.cancel()
@@ -453,10 +475,16 @@ final class WallpaperModel: ObservableObject {
     }
 
     var currentWallpaperOptions: WallpaperLibraryOptions {
-        WallpaperLibraryOptions(target: target, scaling: scaling, isMuted: isMuted, volume: volume,
-            animateOnExternalPower: animateOnExternalPower, animateOnBattery: animateOnBattery,
-            pauseInLowPowerMode: pauseInLowPowerMode, pauseWhenCovered: pauseWhenCovered,
-            syncSystemWallpaper: syncSystemWallpaper)
+        let rules = effectivePowerRules
+        return WallpaperLibraryOptions(target: target, scaling: scaling, isMuted: isMuted, volume: volume,
+            animateOnExternalPower: rules.animateOnExternalPower, animateOnBattery: rules.animateOnBattery,
+            pauseInLowPowerMode: rules.pauseInLowPowerMode, pauseWhenCovered: rules.pauseWhenCovered,
+            syncSystemWallpaper: syncSystemWallpaper, usesGlobalPowerRules: activeWallpaperUsesGlobalPowerRules)
+    }
+
+    func editorOptions(for entry: WallpaperLibraryEntry) -> WallpaperLibraryOptions {
+        activeWallpaperID == entry.id ? currentWallpaperOptions
+            : (wallpaperLibrary.entries.first { $0.id == entry.id }?.options ?? entry.options)
     }
 
     func importWallpaper(_ url: URL) {
@@ -464,7 +492,9 @@ final class WallpaperModel: ObservableObject {
         libraryTask?.cancel()
         let actionID = UUID()
         libraryActionID = actionID
-        let options = currentWallpaperOptions
+        // Import starts from predictable video defaults and inherits the app's
+        // power policy instead of copying the previous wallpaper's exceptions.
+        let options = WallpaperLibraryOptions()
         beginLibraryAction()
         libraryTask = Task { [weak self] in
             guard let self else { return }
@@ -518,16 +548,66 @@ final class WallpaperModel: ObservableObject {
     }
 
     @discardableResult
-    func updateWallpaper(_ entry: WallpaperLibraryEntry, options: WallpaperLibraryOptions) async -> Bool {
+    func updateWallpaper(_ entry: WallpaperLibraryEntry, options: WallpaperLibraryOptions,
+                         originalOptions: WallpaperLibraryOptions? = nil) async -> Bool {
+        guard !isLoading else { return false }
+        let latest = editorOptions(for: entry)
+        let merged = originalOptions.map { Self.mergeEditedOptions(options, original: $0, latest: latest) } ?? options
         beginLibraryAction()
         defer { endLibraryAction() }
-        guard let updated = await wallpaperLibrary.updateOptions(entry, options: options) else { return false }
+        guard let updated = await wallpaperLibrary.updateOptions(entry, options: merged) else { return false }
         if activeWallpaperID == entry.id {
-            applyOptions(updated.options)
-            synchronizeSystemWallpaper()
-            synchronizeScreenSaver()
+            applyEditedOptions(updated.options)
         }
         return true
+    }
+
+    @discardableResult
+    func updateCurrentWallpaper(options: WallpaperLibraryOptions,
+                                originalOptions: WallpaperLibraryOptions? = nil,
+                                expectedURL: URL? = nil) async -> Bool {
+        guard selectedURL != nil, !isLoading else { return false }
+        if let expectedURL, selectedURL != expectedURL { return false }
+        if let id = activeWallpaperID {
+            guard let entry = wallpaperLibrary.entries.first(where: { $0.id == id }) else { return false }
+            return await updateWallpaper(entry, options: options, originalOptions: originalOptions)
+        }
+        let merged = originalOptions.map {
+            Self.mergeEditedOptions(options, original: $0, latest: currentWallpaperOptions)
+        } ?? options
+        applyEditedOptions(merged)
+        return true
+    }
+
+    func toggleCurrentWallpaperMute() async {
+        guard !isWorkingWithWallpapers, !wallpaperLibrary.isWorking, !isLoading else { return }
+        // Until the legacy current settings are explicitly saved, quick actions
+        // keep using that cache without overwriting the separately saved preset.
+        if hasLegacyCurrentSettings {
+            isMuted.toggle()
+            return
+        }
+        var options = currentWallpaperOptions
+        options.isMuted.toggle()
+        _ = await updateCurrentWallpaper(options: options)
+    }
+
+    /// Only edited fields replace the latest values. A tray action or a global
+    /// rule change while a sheet is open must not be undone by saving its draft.
+    private static func mergeEditedOptions(_ edited: WallpaperLibraryOptions,
+                                           original: WallpaperLibraryOptions,
+                                           latest: WallpaperLibraryOptions) -> WallpaperLibraryOptions {
+        var result = latest
+        if edited.target != original.target { result.target = edited.target }
+        if edited.scaling != original.scaling { result.scaling = edited.scaling }
+        if edited.isMuted != original.isMuted { result.isMuted = edited.isMuted }
+        if Float(edited.volume) != Float(original.volume) { result.volume = edited.volume }
+        if edited.syncSystemWallpaper != original.syncSystemWallpaper { result.syncSystemWallpaper = edited.syncSystemWallpaper }
+        if edited.usesGlobalPowerRules != original.usesGlobalPowerRules || edited.powerRules != original.powerRules {
+            result.usesGlobalPowerRules = edited.usesGlobalPowerRules
+            result.powerRules = edited.powerRules
+        }
+        return result
     }
 
     @discardableResult
@@ -543,24 +623,81 @@ final class WallpaperModel: ObservableObject {
             activeWallpaperID = nil
             preferences.activeWallpaperID = nil
             preferences.videoBookmark = nil
+            clearLegacyCurrentSettings()
             selectedURL = nil
             thumbnail = nil
+            wallpaperPowerOverride = nil
+            refreshEffectivePowerRules()
         }
         return true
     }
 
     private func applyOptions(_ options: WallpaperLibraryOptions) {
+        let newOverride = options.usesGlobalPowerRules ? nil : options.powerRules
+        // An explicit change of power policy ends Animate Now. Unrelated edits
+        // such as volume and scaling leave the temporary playback choice alone.
+        if wallpaperPowerOverride != newOverride { setTemporaryAnimation(false) }
         isApplyingWallpaperOptions = true
         target = options.target
         scaling = options.scaling
         isMuted = options.isMuted
         volume = options.volume
-        animateOnExternalPower = options.animateOnExternalPower
-        animateOnBattery = options.animateOnBattery
-        pauseInLowPowerMode = options.pauseInLowPowerMode
-        pauseWhenCovered = options.pauseWhenCovered
+        wallpaperPowerOverride = newOverride
         syncSystemWallpaper = options.syncSystemWallpaper
         isApplyingWallpaperOptions = false
+        refreshEffectivePowerRules()
+    }
+
+    private func applyEditedOptions(_ options: WallpaperLibraryOptions) {
+        let previous = currentWallpaperOptions
+        applyOptions(options)
+        clearLegacyCurrentSettings()
+        let current = currentWallpaperOptions
+        // Audio edits must not rewrite the system background or regenerate the
+        // linked saver. Each integration observes only the settings it uses.
+        if previous.target != current.target || previous.scaling != current.scaling
+            || previous.syncSystemWallpaper != current.syncSystemWallpaper {
+            synchronizeSystemWallpaper()
+        }
+        if previous.scaling != current.scaling
+            || previous.animateOnExternalPower != current.animateOnExternalPower
+            || previous.animateOnBattery != current.animateOnBattery
+            || previous.pauseInLowPowerMode != current.pauseInLowPowerMode {
+            synchronizeScreenSaver()
+        }
+    }
+
+    private func clearLegacyCurrentSettings() {
+        legacyCurrentWallpaperID = nil
+        preferences.legacyCurrentWallpaperID = nil
+    }
+
+    private func globalPowerRulesChanged() {
+        guard !isApplyingWallpaperOptions else { return }
+        preferences.globalPowerRules = globalPowerRules
+        let previous = appliedPowerRules
+        let current = effectivePowerRules
+        if previous != current { setTemporaryAnimation(false) }
+        refreshEffectivePowerRules()
+        // Desktop coverage does not affect the system screen saver.
+        if previous.animateOnExternalPower != current.animateOnExternalPower
+            || previous.animateOnBattery != current.animateOnBattery
+            || previous.pauseInLowPowerMode != current.pauseInLowPowerMode {
+            synchronizeScreenSaver()
+        }
+    }
+
+    private func refreshEffectivePowerRules() {
+        let rules = effectivePowerRules
+        appliedPowerRules = rules
+        policy.animateOnExternalPower = rules.animateOnExternalPower
+        policy.animateOnBattery = rules.animateOnBattery
+        policy.pauseInLowPowerMode = rules.pauseInLowPowerMode
+        preferences.animateOnExternalPower = rules.animateOnExternalPower
+        preferences.animateOnBattery = rules.animateOnBattery
+        preferences.pauseInLowPowerMode = rules.pauseInLowPowerMode
+        preferences.pauseWhenCovered = rules.pauseWhenCovered
+        preferences.currentWallpaperUsesGlobalPowerRules = activeWallpaperUsesGlobalPowerRules
         configureEngine()
         updatePlayback()
     }
@@ -601,7 +738,7 @@ final class WallpaperModel: ObservableObject {
     private func configureEngine() {
         guard !isApplyingWallpaperOptions else { return }
         engine.configure(target: target, scaling: scaling, isMuted: isMuted,
-                         pauseWhenCovered: pauseWhenCovered, volume: Float(volume))
+                         pauseWhenCovered: effectivePowerRules.pauseWhenCovered, volume: Float(volume))
     }
 
     func synchronizeScreenSaver() {
@@ -613,10 +750,11 @@ final class WallpaperModel: ObservableObject {
         }
         guard !isLoading, let selectedURL else { return }
         let name = selectedWallpaperName ?? selectedURL.deletingPathExtension().lastPathComponent
+        let rules = effectivePowerRules
         screenSaverSync.synchronize(videoURL: selectedURL, name: String(name.prefix(80)),
             options: ScreenSaverExportOptions(scaling: scaling == .fill ? .fill : .fit,
-                animateOnBattery: animateOnBattery, animateOnExternalPower: animateOnExternalPower,
-                pauseInLowPowerMode: pauseInLowPowerMode))
+                animateOnBattery: rules.animateOnBattery, animateOnExternalPower: rules.animateOnExternalPower,
+                pauseInLowPowerMode: rules.pauseInLowPowerMode))
     }
 
     private var selectedSystemScreenIDs: [UInt32] {

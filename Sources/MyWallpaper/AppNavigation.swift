@@ -35,8 +35,8 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .wallpaper: return "Видео и оформление рабочего стола."
         case .screenSaver: return "Любимое видео, когда Mac отдыхает."
-        case .general: return "Запуск приложения и воспроизведение."
-        case .power: return "Выбери, когда обои будут двигаться."
+        case .general: return "Запуск и язык приложения."
+        case .power: return "Общие правила для всех обоев."
         case .updates: return "Новые версии MyWallpaper с GitHub."
         }
     }
@@ -45,4 +45,15 @@ enum AppSection: String, CaseIterable, Identifiable {
 @MainActor
 final class AppNavigation: ObservableObject {
     @Published var section: AppSection = .wallpaper
+    @Published var wallpaperEditor: WallpaperEditorRoute?
+
+    func configureWallpaper(_ entry: WallpaperLibraryEntry?) {
+        section = .wallpaper
+        wallpaperEditor = WallpaperEditorRoute(entry: entry)
+    }
+}
+
+struct WallpaperEditorRoute: Identifiable {
+    let id = UUID()
+    let entry: WallpaperLibraryEntry?
 }

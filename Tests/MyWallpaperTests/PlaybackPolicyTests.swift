@@ -4,6 +4,43 @@ import Testing
 @Suite
 struct PlaybackPolicyTests {
     @Test
+    func temporaryAnimationDoesNotRewriteSavedPowerRules() {
+        var policy = PlaybackPolicy()
+        policy.powerSource = .battery
+        #expect(!policy.shouldPlay)
+        policy.temporaryAnimationOverride = true
+        #expect(policy.shouldPlay && policy.animatesOnCurrentPowerSource && policy.pauseReason == nil)
+        #expect(!policy.animateOnBattery && policy.animateOnExternalPower)
+        policy.temporaryAnimationOverride = false
+        #expect(!policy.shouldPlay && policy.pauseReason != nil)
+        #expect(!policy.animateOnBattery && policy.animateOnExternalPower)
+    }
+
+    @Test
+    func temporaryAnimationStillRespectsManualSleepSessionAndLowPowerPauses() {
+        var policy = PlaybackPolicy()
+        policy.powerSource = .battery
+        policy.temporaryAnimationOverride = true
+        policy.userPaused = true
+        #expect(!policy.shouldPlay && policy.pauseReason == "На паузе")
+        policy.userPaused = false
+        policy.systemSleeping = true
+        #expect(!policy.shouldPlay && policy.pauseReason == "Экран спит")
+        policy.systemSleeping = false
+        policy.screensSleeping = true
+        #expect(!policy.shouldPlay)
+        policy.screensSleeping = false
+        policy.sessionInactive = true
+        #expect(!policy.shouldPlay && policy.pauseReason == "Сеанс неактивен")
+        policy.sessionInactive = false
+        policy.lowPowerMode = true
+        #expect(!policy.shouldPlay && policy.pauseReason == "Пауза для экономии энергии")
+        policy.pauseInLowPowerMode = false
+        #expect(policy.shouldPlay)
+        #expect(!policy.animateOnBattery)
+    }
+
+    @Test
     func defaultsAnimateOnExternalPowerAndHoldAStillFrameOnBattery() {
         var policy = PlaybackPolicy()
         policy.powerSource = .external

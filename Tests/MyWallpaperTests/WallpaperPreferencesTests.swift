@@ -5,6 +5,73 @@ import Testing
 @Suite
 struct WallpaperPreferencesTests {
     @Test
+    func globalPowerRulesReadLegacyPreferencesWithoutChangingThem() throws {
+        try withIsolatedDefaults { defaults in
+            let preferences = WallpaperPreferences(defaults: defaults)
+            preferences.animateOnExternalPower = false
+            preferences.animateOnBattery = true
+            preferences.pauseInLowPowerMode = false
+            preferences.pauseWhenCovered = false
+            preferences.volume = 0.25
+            let before = defaults.dictionaryRepresentation()
+            #expect(!preferences.hasStoredGlobalPowerRules)
+            #expect(preferences.currentWallpaperUsesGlobalPowerRules == nil)
+            #expect(preferences.legacyCurrentWallpaperID == nil)
+            #expect(preferences.globalPowerRules == WallpaperPowerRules(animateOnExternalPower: false,
+                animateOnBattery: true, pauseInLowPowerMode: false, pauseWhenCovered: false))
+            #expect(NSDictionary(dictionary: defaults.dictionaryRepresentation()).isEqual(to: before))
+        }
+    }
+
+    @Test
+    func seededGlobalRulesRemainIndependentOfTheEffectivePlaybackCache() throws {
+        try withIsolatedDefaults { defaults in
+            let preferences = WallpaperPreferences(defaults: defaults)
+            let preservedID = UUID()
+            preferences.legacyCurrentWallpaperID = preservedID
+            let global = WallpaperPowerRules(animateOnExternalPower: false, animateOnBattery: true,
+                                             pauseInLowPowerMode: false, pauseWhenCovered: true)
+            preferences.globalPowerRules = global
+            preferences.currentWallpaperUsesGlobalPowerRules = false
+            preferences.animateOnExternalPower = true
+            preferences.animateOnBattery = false
+            preferences.pauseInLowPowerMode = true
+            preferences.pauseWhenCovered = false
+            let restored = WallpaperPreferences(defaults: defaults)
+            #expect(restored.hasStoredGlobalPowerRules && restored.globalPowerRules == global)
+            #expect(restored.currentWallpaperUsesGlobalPowerRules == false)
+            #expect(restored.legacyCurrentWallpaperID == preservedID)
+            #expect(restored.animateOnExternalPower && !restored.animateOnBattery)
+            #expect(restored.pauseInLowPowerMode && !restored.pauseWhenCovered)
+            preferences.globalPowerRules = .init()
+            #expect(restored.pauseInLowPowerMode && !restored.pauseWhenCovered,
+                    "Changing global defaults does not itself rewrite the current cache.")
+            preferences.currentWallpaperUsesGlobalPowerRules = true
+            #expect(restored.currentWallpaperUsesGlobalPowerRules == true)
+            preferences.currentWallpaperUsesGlobalPowerRules = nil
+            #expect(restored.currentWallpaperUsesGlobalPowerRules == nil)
+            preferences.legacyCurrentWallpaperID = nil
+            #expect(restored.legacyCurrentWallpaperID == nil)
+        }
+    }
+
+    @Test(arguments: [Data("invalid JSON".utf8), Data("{}".utf8),
+                      Data("{\"animateOnExternalPower\":\"false\",\"animateOnBattery\":true,\"pauseInLowPowerMode\":true,\"pauseWhenCovered\":true}".utf8)])
+    func invalidStoredGlobalRulesFallBackWithoutDestroyingLegacyValues(_ malformed: Data) throws {
+        try withIsolatedDefaults { defaults in
+            let preferences = WallpaperPreferences(defaults: defaults)
+            preferences.animateOnBattery = true
+            defaults.set(malformed, forKey: "globalPowerRules")
+            #expect(!preferences.hasStoredGlobalPowerRules)
+            #expect(preferences.globalPowerRules.animateOnBattery)
+            #expect(defaults.data(forKey: "globalPowerRules") == malformed)
+            preferences.globalPowerRules = preferences.globalPowerRules
+            #expect(preferences.hasStoredGlobalPowerRules && preferences.globalPowerRules.animateOnBattery)
+            #expect(preferences.animateOnBattery)
+        }
+    }
+
+    @Test
     func testFirstLaunchIsSilentAndDoesNotEnableMissingWallpaper() throws {
         try withIsolatedDefaults { defaults in
             let preferences = WallpaperPreferences(defaults: defaults)

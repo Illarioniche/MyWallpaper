@@ -27,7 +27,7 @@ struct ControlView: View {
                             UpdateAvailableBanner(version: release.version, localizer: model.localizer) { navigation.section = .updates }
                         }
                         switch navigation.section {
-                        case .wallpaper: WallpaperSettingsPane(model: model)
+                        case .wallpaper: WallpaperSettingsPane(model: model, navigation: navigation)
                         case .screenSaver: ScreenSaverSettingsPane(model: model, screenSaver: model.screenSaver)
                         case .general: GeneralSettingsPane(model: model)
                         case .power: PowerSettingsPane(model: model)
@@ -47,6 +47,12 @@ struct ControlView: View {
         .frame(minWidth: 820, idealWidth: 980, maxWidth: .infinity,
                minHeight: 600, idealHeight: 736, maxHeight: .infinity)
         .environment(\.locale, model.localizer.locale)
+        .sheet(item: $navigation.wallpaperEditor) { route in
+            WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary, entry: route.entry) {
+                navigation.wallpaperEditor = nil
+                navigation.section = .power
+            }
+        }
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 16)
@@ -82,28 +88,15 @@ struct ControlView: View {
             .padding(.top, 22)
             .padding(.bottom, 28)
 
-            Text(model.localizer.text("Настройки"))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 8)
-
             List(selection: Binding<AppSection?>(
                 get: { navigation.section },
                 set: { if let section = $0 { navigation.section = section } }
             )) {
-                ForEach(AppSection.allCases) { section in
-                    HStack(spacing: 11) {
-                        SettingsIcon(symbol: section.symbol, color: section.color, size: 28)
-                        Text(model.localizer.text(section.title)).font(.system(size: 13, weight: .medium))
-                        if section == .updates, updates.availableRelease != nil {
-                            Circle().fill(Color.teal).frame(width: 6, height: 6)
-                                .accessibilityLabel(model.localizer.text("Доступна новая версия"))
-                        }
-                    }
-                    .padding(.vertical, 5)
-                    .tag(section)
-                    .accessibilityLabel(model.localizer.text(section.title))
+                Section(model.localizer.text("Коллекции")) {
+                    ForEach([AppSection.wallpaper, .screenSaver]) { sidebarRow($0) }
+                }
+                Section(model.localizer.text("Настройки")) {
+                    ForEach([AppSection.general, .power, .updates]) { sidebarRow($0) }
                 }
             }
             .listStyle(.sidebar)
@@ -138,6 +131,20 @@ struct ControlView: View {
             if reduceTransparency { Color(nsColor: .windowBackgroundColor) }
             else { Rectangle().fill(.regularMaterial) }
         }
+    }
+
+    private func sidebarRow(_ section: AppSection) -> some View {
+        HStack(spacing: 11) {
+            SettingsIcon(symbol: section.symbol, color: section.color, size: 28)
+            Text(model.localizer.text(section.title)).font(.system(size: 13, weight: .medium))
+            if section == .updates, updates.availableRelease != nil {
+                Circle().fill(Color.teal).frame(width: 6, height: 6)
+                    .accessibilityLabel(model.localizer.text("Доступна новая версия"))
+            }
+        }
+        .padding(.vertical, 5)
+        .tag(section)
+        .accessibilityLabel(model.localizer.text(section.title))
     }
 
     private var statusSymbol: String {
@@ -188,186 +195,88 @@ struct ControlView: View {
 @MainActor
 private struct WallpaperSettingsPane: View {
     @ObservedObject var model: WallpaperModel
+    @ObservedObject var navigation: AppNavigation
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            WallpaperLibraryPane(model: model)
-            if model.selectedURL != nil || model.isLoading {
-                currentSettings
-            }
+            if model.selectedURL != nil || model.isLoading { currentWallpaper }
+            WallpaperLibraryPane(model: model) { navigation.configureWallpaper($0) }
         }
     }
 
-    private var currentSettings: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            SettingsCard {
-                preview
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .frame(maxWidth: 560)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(.white.opacity(0.14), lineWidth: 1)
-                    }
-                    .shadow(color: .black.opacity(model.thumbnail == nil ? 0.04 : 0.17), radius: 16, y: 7)
-                    .padding(16)
-                    .frame(maxWidth: .infinity)
-                    .background(AppColors.previewSurround)
-
-                if model.selectedURL != nil {
-                    Divider()
-                    HStack(spacing: 12) {
-                        RowIcon(symbol: "film", color: .teal)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(model.selectedWallpaperName ?? model.selectedURL?.lastPathComponent ?? model.localizer.text("Видео"))
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            HStack(spacing: 6) {
-                                Text(model.selectedURL?.pathExtension.uppercased() ?? model.localizer.text("Видео"))
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
-                                    .background(AppColors.statusBackground, in: RoundedRectangle(cornerRadius: 4))
-                                Text(model.localizer.text("Текущие обои")).font(.system(size: 11))
-                            }
-                            .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 4)
-                        if model.activeWallpaperID == nil {
-                            Button(action: model.revealVideo) {
-                                Image(systemName: "folder").frame(width: 28, height: 28)
-                            }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.secondary)
-                            .help(model.localizer.text("Показать видео в Finder"))
-                            .accessibilityLabel(model.localizer.text("Показать видео в Finder"))
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .help(model.selectedWallpaperName ?? model.selectedURL?.path ?? "")
-                }
-
-                if model.selectedURL != nil || model.isLoading {
-                    Divider().padding(.horizontal, 16)
-                    HStack(spacing: 10) {
-                        Button(action: model.togglePlayback) {
-                            Label(model.playbackButtonTitle, systemImage: model.playbackButtonSymbol)
-                                .frame(minWidth: 94)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(model.isLoading)
-                        Button(action: model.stop) {
-                            Label(model.localizer.text("Выключить"), systemImage: "stop.fill")
-                        }
-                        .controlSize(.large)
-                        .disabled(!model.hasWallpaper && !model.isLoading)
-                        .help(model.syncSystemWallpaper
-                              ? model.localizer.text("Остановить видео; системный кадр останется.")
-                              : model.localizer.text("Вернуть обычные обои macOS"))
-                        Spacer(minLength: 4)
-                        Image(systemName: model.isMuted ? "speaker.slash" : "speaker.wave.2")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .help(model.isMuted ? model.localizer.text("Звук выключен") : model.localizer.text("Звук включён"))
-                            .accessibilityLabel(model.isMuted ? model.localizer.text("Без звука") : model.localizer.text("Со звуком"))
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                } else {
-                    HStack {
-                        Label(model.localizer.text("MP4, MOV и другие форматы"), systemImage: "film")
-                        Spacer()
-                        Label(model.localizer.text("Видео с этого Mac"), systemImage: "folder")
-                    }
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .padding(16)
-                }
-            }
-
-            SettingsGroup(title: model.localizer.text("Оформление")) {
-                SettingsRow(title: model.localizer.text("Экран"), symbol: "display.2", color: .blue) {
-                    Picker(model.localizer.text("Экран"), selection: $model.target) {
-                        ForEach(DisplayTarget.allCases) { Text(model.localizer.text($0.title)).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 170)
-                }
-                SettingsDivider()
-                SettingsRow(title: model.localizer.text("Масштаб"), detail: model.localizer.text("Как видео располагается на экране."),
-                            symbol: "arrow.up.left.and.arrow.down.right", color: .purple) {
-                    Picker(model.localizer.text("Масштаб"), selection: $model.scaling) {
-                        ForEach(VideoScaling.allCases) { Text(model.localizer.text($0.title)).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 176)
-                }
-                SettingsDivider()
-                SettingsToggle(title: model.localizer.text("Системный фон из видео"),
-                               detail: model.localizer.text("Сохранять кадр видео как обои macOS. Он останется после выхода из приложения."),
-                               symbol: "photo.on.rectangle", color: .teal,
-                               isOn: $model.syncSystemWallpaper)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(model.localizer.text("Применяется к текущему рабочему столу на выбранных экранах. macOS может отключить показ на всех пространствах Spaces."))
-                    if model.isSyncingSystemWallpaper {
-                        ProgressView(model.localizer.text("Обновляем системный фон…"))
-                            .controlSize(.small)
-                    }
-                }
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 60).padding(.trailing, 16).padding(.bottom, 16)
-            }
-        }
+    private var isBusy: Bool {
+        model.isLoading || model.isWorkingWithWallpapers || model.wallpaperLibrary.isWorking
     }
 
-    private var preview: some View {
-        GeometryReader { geometry in
-            ZStack {
-                if let image = model.thumbnail {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: model.scaling == .fill ? .fill : .fit)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .background(.black)
-                } else {
-                    LinearGradient(colors: [Color.teal.opacity(0.10), Color.blue.opacity(0.035)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                    VStack(spacing: 9) {
-                        AppBrandIcon(size: 68).padding(.bottom, 4)
-                        Text(model.selectedURL == nil ? model.localizer.text("Рабочий стол с характером") : model.localizer.text("Предпросмотр видео"))
-                            .font(.system(size: 17, weight: .semibold))
-                        if model.selectedURL == nil {
-                            Text(model.localizer.text("Перетащи любимое видео в это окно"))
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                            Button(action: model.chooseVideo) {
-                                Label(model.localizer.text("Выбрать видео"), systemImage: "plus")
-                            }
-                            .controlSize(.large)
-                            .padding(.top, 7)
-                        }
+    private var currentWallpaper: some View {
+        SettingsCard {
+            HStack(alignment: .top, spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9).fill(Color.teal.opacity(0.1))
+                    if let thumbnail = model.thumbnail {
+                        Image(nsImage: thumbnail).resizable().scaledToFill()
+                            .frame(width: 128, height: 80).clipped()
+                    } else {
+                        Image(systemName: "photo").font(.system(size: 25)).foregroundStyle(.teal)
                     }
-                    .padding(20)
+                    if model.isLoading { ProgressView().controlSize(.small) }
                 }
-                if model.isLoading {
-                    Color(nsColor: .windowBackgroundColor).opacity(0.75)
-                    ProgressView(model.localizer.text("Открываем видео…"))
-                        .font(.system(size: 12))
-                        .padding(20)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .frame(width: 128, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(model.localizer.text("Текущие обои"))
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                    Text(model.selectedWallpaperName ?? model.selectedURL?.deletingPathExtension().lastPathComponent
+                         ?? model.localizer.text("Открываем видео…"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(2).truncationMode(.middle)
+                    Label(model.status, systemImage: model.isPlaying ? "play.circle.fill" : "pause.circle")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if model.isTemporarilyAnimating {
+                        Text(model.localizer.text("Анимация включена временно. Правила питания не изменены."))
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                Spacer(minLength: 0)
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
+            .padding(16)
+            Divider().padding(.horizontal, 16)
+            HStack(spacing: 9) {
+                Button(action: model.togglePlayback) {
+                    Label(model.playbackButtonTitle, systemImage: model.playbackButtonSymbol)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isLoading)
+                Button(action: model.stop) {
+                    Label(model.localizer.text("Выключить"), systemImage: "stop.fill")
+                }
+                .disabled(!model.hasWallpaper && !model.isLoading)
+                .help(model.syncSystemWallpaper
+                      ? model.localizer.text("Остановить видео; системный кадр останется.")
+                      : model.localizer.text("Вернуть обычные обои macOS"))
+                Spacer(minLength: 0)
+                Button {
+                    Task { await model.toggleCurrentWallpaperMute() }
+                } label: {
+                    Image(systemName: model.isMuted ? "speaker.slash" : "speaker.wave.2")
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.borderless).disabled(isBusy)
+                .help(model.localizer.text(model.isMuted ? "Включить звук" : "Выключить звук"))
+                .accessibilityLabel(model.localizer.text(model.isMuted ? "Включить звук" : "Выключить звук"))
+                Button(model.localizer.text("Настроить…")) {
+                    let entry = model.wallpaperLibrary.entries.first { $0.id == model.activeWallpaperID }
+                    navigation.configureWallpaper(entry)
+                }
+                .disabled(isBusy || model.selectedURL == nil)
+            }
+            .controlSize(.regular)
+            .padding(.horizontal, 16).padding(.vertical, 12)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(model.localizer.text("Предпросмотр обоев"))
     }
 }
 
@@ -387,27 +296,6 @@ private struct GeneralSettingsPane: View {
                                detail: model.localizer.text("Открывать последнее видео в выбранном режиме."),
                                symbol: "arrow.counterclockwise", color: .blue,
                                isOn: $model.restoreOnLaunch)
-            }
-            SettingsGroup(title: model.localizer.text("Звук")) {
-                SettingsToggle(title: model.localizer.text("Без звука"), detail: model.localizer.text("Отключить аудиодорожку видео."),
-                               symbol: "speaker.slash.fill", color: .purple, isOn: $model.isMuted)
-                SettingsDivider()
-                SettingsRow(title: model.localizer.text("Громкость"),
-                            detail: model.localizer.text(model.isMuted
-                                ? "Звук выключен. Уровень сохранится после включения."
-                                : "Уровень звука видеообоев."),
-                            symbol: "speaker.wave.2.fill", color: .purple) {
-                    HStack(spacing: 10) {
-                        Slider(value: $model.volume, in: 0...1)
-                            .accessibilityLabel(model.localizer.text("Громкость"))
-                            .accessibilityValue(model.volume.formatted(.percent.precision(.fractionLength(0)).locale(model.localizer.locale)))
-                        Text(model.volume.formatted(.percent.precision(.fractionLength(0)).locale(model.localizer.locale)))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 42, alignment: .trailing)
-                    }
-                    .frame(width: 190)
-                }
             }
             SettingsGroup(title: model.localizer.text("Язык")) {
                 SettingsRow(title: model.localizer.text("Язык приложения"),
@@ -505,6 +393,18 @@ private struct PowerSettingsPane: View {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(sourceColor.opacity(0.045))
+            }
+            Text(model.localizer.text("Эти правила действуют для всех обоев. Для отдельного видео можно задать исключение в его настройках."))
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.selectedURL != nil && !model.currentWallpaperOptions.usesGlobalPowerRules {
+                Label(model.localizer.text("Текущие обои используют свои правила питания. Изменения ниже не заменят это исключение."),
+                      systemImage: "slider.horizontal.3")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
             }
             SettingsGroup(title: model.localizer.text("Режим воспроизведения")) {
                 SettingsToggle(title: model.localizer.text("Живые обои от сети"),

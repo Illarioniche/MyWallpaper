@@ -30,6 +30,8 @@ enum RenderUI {
         preferences.language = .russian
         preferences.restoreOnLaunch = false
         preferences.wallpaperEnabled = false
+        preferences.globalPowerRules = .init()
+        preferences.currentWallpaperUsesGlobalPowerRules = true
         if CommandLine.arguments.count > 2 {
             let video = URL(fileURLWithPath: CommandLine.arguments[2]).standardizedFileURL
             preferences.videoBookmark = try video.bookmarkData(options: [],
@@ -57,6 +59,10 @@ enum RenderUI {
                 var options = WallpaperLibraryOptions()
                 options.volume = 0.35
                 options.syncSystemWallpaper = true
+                if name == "Тихий берег" {
+                    options.usesGlobalPowerRules = false
+                    options.animateOnBattery = true
+                }
                 guard let entry = await wallpapers.addVideo(video, options: options),
                       let renamed = await wallpapers.rename(entry, name: name) else {
                     throw PreviewFailure(message: "Could not create the isolated wallpaper library fixture.")
@@ -251,9 +257,17 @@ enum RenderUI {
                 try await capture(model, section: .wallpaper, scheme: scheme,
                                   size: NSSize(width: 820, height: 616),
                                   to: output.appendingPathComponent("ui-wallpaper-library-\(code)-\(theme)-compact.png"))
-                try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary, entry: entry),
+                try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary, entry: entry, onOpenPower: {}),
                                       scheme: scheme, size: NSSize(width: 560, height: 560),
                                       to: output.appendingPathComponent("ui-wallpaper-options-\(code)-\(theme)-compact.png"))
+                try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary, entry: entry, onOpenPower: {}),
+                                      scheme: scheme, size: NSSize(width: 560, height: 560), scrollToBottom: true,
+                                      to: output.appendingPathComponent("ui-wallpaper-inherited-power-\(code)-\(theme).png"))
+                if let exception = model.wallpaperLibrary.entries.first(where: { !$0.options.usesGlobalPowerRules }) {
+                    try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary, entry: exception, onOpenPower: {}),
+                                          scheme: scheme, size: NSSize(width: 560, height: 560), scrollToBottom: true,
+                                          to: output.appendingPathComponent("ui-wallpaper-custom-power-\(code)-\(theme).png"))
+                }
             }
         }
         guard !model.hasWallpaper && !model.isPlaying else {
@@ -287,8 +301,10 @@ enum RenderUI {
                 for (theme, scheme) in themes {
                     let state = isMuted ? "muted" : "unmuted"
                     let name = "ui-audio-\(code)-\(state)-\(theme)-compact.png"
-                    try await capture(model, section: .general, scheme: scheme,
-                                      size: size, to: output.appendingPathComponent(name))
+                    try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary,
+                                          entry: model.wallpaperLibrary.entries.first(where: { $0.id == model.activeWallpaperID }), onOpenPower: {}),
+                                          scheme: scheme, size: NSSize(width: 560, height: 560), scrollToBottom: true,
+                                          to: output.appendingPathComponent(name))
                 }
             }
         }
@@ -431,7 +447,7 @@ enum RenderUI {
 
     @MainActor
     private static func captureView<Content: View>(_ content: Content, scheme: ColorScheme,
-                                                 size: NSSize, to destination: URL) async throws {
+                                                  size: NSSize, scrollToBottom: Bool = false, to destination: URL) async throws {
         let bounds = NSRect(origin: .zero, size: size)
         let root = content
             .environment(\.colorScheme, scheme)
@@ -446,6 +462,20 @@ enum RenderUI {
         // Never order this window onscreen and never capture any display.
         try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
+        if scrollToBottom {
+            func findScrollView(_ view: NSView) -> NSScrollView? {
+                if let scroll = view as? NSScrollView { return scroll }
+                return view.subviews.lazy.compactMap { findScrollView($0) }.first
+            }
+            guard let scroll = findScrollView(hosting), let document = scroll.documentView else {
+                throw PreviewFailure(message: "The editor preview did not expose its scrollable content.")
+            }
+            let y = document.isFlipped ? max(0, document.bounds.height - scroll.contentView.bounds.height) : 0
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(100))
+            hosting.layoutSubtreeIfNeeded()
+        }
         hosting.displayIfNeeded()
         guard !window.isVisible,
               let bitmap = hosting.bitmapImageRepForCachingDisplay(in: bounds) else {

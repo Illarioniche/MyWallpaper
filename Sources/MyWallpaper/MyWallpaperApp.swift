@@ -36,8 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         launchedAtLogin = launchedAtLogin || LoginItemController.wasLaunchedAtLogin()
         buildMainMenu()
-        settings.onError = { [weak self] in self?.showWindow() }
         settings.onOpenSettings = { [weak self] in self?.showSettings() }
+        settings.onOpenPower = { [weak self] in
+            self?.navigation.section = .power
+            self?.showWindow()
+        }
         settings.onOpenUpdates = { [weak self] in self?.showUpdates() }
         settings.onOpenScreenSaver = { [weak self] in
             self?.navigation.section = .screenSaver
@@ -133,6 +136,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playback.isEnabled = !model.isLoading && model.selectedURL != nil
         let stop = addItem(model.localizer.text("Выключить обои"), action: #selector(stopWallpaper), to: menu)
         stop.isEnabled = model.hasWallpaper || model.isLoading
+        let mute = addItem(model.localizer.text("Без звука"), action: #selector(toggleMute), to: menu)
+        mute.state = model.isMuted ? .on : .off
+        mute.isEnabled = model.selectedURL != nil && !model.isLoading && !model.isWorkingWithWallpapers
+            && !model.wallpaperLibrary.isWorking
+        let configure = addItem(model.localizer.text("Настроить текущие обои…"), action: #selector(configureWallpaper), to: menu)
+        configure.isEnabled = model.selectedURL != nil && !model.isLoading && !model.isWorkingWithWallpapers
+            && !model.wallpaperLibrary.isWorking
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: model.localizer.text("Настройки"), action: nil, keyEquivalent: "")
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
@@ -173,6 +183,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func togglePlayback() { model.togglePlayback() }
     @objc private func stopWallpaper() { model.stop() }
+    @objc private func toggleMute() { Task { await model.toggleCurrentWallpaperMute() } }
+    @objc private func configureWallpaper() {
+        guard model.selectedURL != nil, !model.isLoading, !model.isWorkingWithWallpapers,
+              !model.wallpaperLibrary.isWorking else { return }
+        if navigation.wallpaperEditor == nil {
+            let entry = model.wallpaperLibrary.entries.first { $0.id == model.activeWallpaperID }
+            navigation.configureWallpaper(entry)
+        }
+        showWindow()
+    }
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func showSettings() {
@@ -261,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: model.localizer.text("Файл"))
         addItem(model.localizer.text("Выбрать видео…"), action: #selector(chooseVideo), key: "o", to: fileMenu)
+        addItem(model.localizer.text("Настроить текущие обои…"), action: #selector(configureWallpaper), to: fileMenu)
         fileMenu.addItem(withTitle: model.localizer.text("Закрыть окно"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
         menu.addItem(fileItem)

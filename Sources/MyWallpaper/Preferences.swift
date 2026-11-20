@@ -12,6 +12,14 @@ enum VideoScaling: String, CaseIterable, Identifiable, Codable, Sendable {
     var title: String { self == .fill ? "Заполнить" : "Вместить" }
 }
 
+/// App-wide defaults and optional per-wallpaper exceptions share the same rules.
+struct WallpaperPowerRules: Codable, Equatable, Sendable {
+    var animateOnExternalPower = true
+    var animateOnBattery = false
+    var pauseInLowPowerMode = true
+    var pauseWhenCovered = true
+}
+
 /// Separate temporary system pauses from the user's intent to play.
 struct PlaybackPolicy {
     var userPaused = false
@@ -23,10 +31,11 @@ struct PlaybackPolicy {
     var powerSource: PowerSource = .external
     var animateOnExternalPower = true
     var animateOnBattery = false
+    var temporaryAnimationOverride = false
 
     var animatesOnCurrentPowerSource: Bool {
         // Missing power readings should not unexpectedly freeze a desktop Mac.
-        powerSource == .battery ? animateOnBattery : animateOnExternalPower
+        temporaryAnimationOverride || (powerSource == .battery ? animateOnBattery : animateOnExternalPower)
     }
 
     var shouldPlay: Bool {
@@ -54,6 +63,43 @@ struct WallpaperPreferences {
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    /// Reading legacy values does not rewrite preferences. The model explicitly
+    /// seeds this independent record once, before playback updates its old cache.
+    var globalPowerRules: WallpaperPowerRules {
+        get {
+            if let saved = storedGlobalPowerRules { return saved }
+            return WallpaperPowerRules(animateOnExternalPower: animateOnExternalPower,
+                animateOnBattery: animateOnBattery, pauseInLowPowerMode: pauseInLowPowerMode,
+                pauseWhenCovered: pauseWhenCovered)
+        }
+        nonmutating set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: "globalPowerRules")
+            }
+        }
+    }
+
+    var hasStoredGlobalPowerRules: Bool { storedGlobalPowerRules != nil }
+
+    /// A missing value identifies the pre-refactor playback cache. Keeping that
+    /// distinction preserves a current override across migration and restart.
+    var currentWallpaperUsesGlobalPowerRules: Bool? {
+        get { defaults.object(forKey: "currentWallpaperUsesGlobalPowerRules") as? Bool }
+        nonmutating set { defaults.set(newValue, forKey: "currentWallpaperUsesGlobalPowerRules") }
+    }
+
+    /// Identifies a preserved pre-upgrade current state until the user saves it
+    /// explicitly or successfully switches to a saved wallpaper.
+    var legacyCurrentWallpaperID: UUID? {
+        get { defaults.string(forKey: "legacyCurrentWallpaperID").flatMap(UUID.init(uuidString:)) }
+        nonmutating set { defaults.set(newValue?.uuidString, forKey: "legacyCurrentWallpaperID") }
+    }
+
+    private var storedGlobalPowerRules: WallpaperPowerRules? {
+        guard let data = defaults.data(forKey: "globalPowerRules") else { return nil }
+        return try? JSONDecoder().decode(WallpaperPowerRules.self, from: data)
+    }
 
     var target: DisplayTarget {
         get { DisplayTarget(rawValue: defaults.string(forKey: "displayTarget") ?? "") ?? .all }
