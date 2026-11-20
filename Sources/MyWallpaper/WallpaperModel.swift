@@ -8,12 +8,17 @@ final class WallpaperModel: ObservableObject {
     let engine = WallpaperEngine()
     let loginItems: LoginItemController
     let updates: UpdateController
+    let screenSaver: ScreenSaverController
     private let powerMonitor: any PowerSourceMonitoring
     private let preferences: WallpaperPreferences
+    private let systemWallpaperSync: any SystemWallpaperSyncing
     private var policy = PlaybackPolicy()
     private var subscriptions = Set<AnyCancellable>()
     private var loadingTask: Task<Void, Never>?
     private var loadID = UUID()
+    private var systemWallpaperTask: Task<Void, Never>?
+    private var systemWallpaperRequestID = UUID()
+    private var synchronizedScreenIDs: [UInt32] = []
     private var scopedURL: URL?
     private var forwardedLoginError: String?
     private var renderError: ((AppLocalizer) -> String)?
@@ -22,6 +27,7 @@ final class WallpaperModel: ObservableObject {
     @Published private(set) var selectedURL: URL?
     @Published private(set) var thumbnail: NSImage?
     @Published private(set) var isLoading = false
+    @Published private(set) var isSyncingSystemWallpaper = false
     @Published private(set) var hasWallpaper = false
     @Published private(set) var isPlaying = false
     @Published private(set) var isPausedForOcclusion = false
@@ -43,10 +49,24 @@ final class WallpaperModel: ObservableObject {
     var localizer: AppLocalizer { AppLocalizer(language: language) }
 
     @Published var target: DisplayTarget {
-        didSet { preferences.target = target; configureEngine() }
+        didSet {
+            preferences.target = target
+            configureEngine()
+            if oldValue != target { synchronizeSystemWallpaper() }
+        }
     }
     @Published var scaling: VideoScaling {
-        didSet { preferences.scaling = scaling; configureEngine() }
+        didSet {
+            preferences.scaling = scaling
+            configureEngine()
+            if oldValue != scaling { synchronizeSystemWallpaper() }
+        }
+    }
+    @Published var syncSystemWallpaper: Bool {
+        didSet {
+            preferences.syncSystemWallpaper = syncSystemWallpaper
+            synchronizeSystemWallpaper()
+        }
     }
     @Published var isMuted: Bool {
         didSet { preferences.isMuted = isMuted; configureEngine() }
@@ -114,16 +134,21 @@ final class WallpaperModel: ObservableObject {
     init(preferences: WallpaperPreferences = WallpaperPreferences(),
          loginItems: LoginItemController? = nil,
          powerMonitor: (any PowerSourceMonitoring)? = nil,
-         updates: UpdateController? = nil) {
+         updates: UpdateController? = nil,
+         screenSaver: ScreenSaverController? = nil,
+         systemWallpaperSync: (any SystemWallpaperSyncing)? = nil) {
         self.preferences = preferences
+        self.systemWallpaperSync = systemWallpaperSync ?? SystemWallpaperSync()
         self.loginItems = loginItems ?? LoginItemController()
         self.updates = updates ?? UpdateController()
+        self.screenSaver = screenSaver ?? ScreenSaverController()
         language = preferences.language
         let monitor = powerMonitor ?? PowerSourceMonitor()
         self.powerMonitor = monitor
         powerSource = monitor.source
         target = preferences.target
         scaling = preferences.scaling
+        syncSystemWallpaper = preferences.syncSystemWallpaper
         isMuted = preferences.isMuted
         volume = preferences.volume
         pauseInLowPowerMode = preferences.pauseInLowPowerMode
@@ -171,6 +196,7 @@ final class WallpaperModel: ObservableObject {
             .store(in: &subscriptions)
         engine.onPlaybackError = { [weak self] message, detail in
             guard let self else { return }
+            self.cancelSystemWallpaperSync()
             self.renderError = { localizer in
                 let message = localizer.text(message)
                 if let detail, !detail.isEmpty { return message + "\n\n" + detail }
@@ -241,6 +267,7 @@ final class WallpaperModel: ObservableObject {
             return
         }
         loadingTask?.cancel()
+        cancelSystemWallpaperSync()
         let requestID = UUID()
         loadID = requestID
         isLoading = true
@@ -275,6 +302,7 @@ final class WallpaperModel: ObservableObject {
                 }
                 self.updatePlayback()
                 self.isLoading = false
+                self.synchronizeSystemWallpaper()
             } catch is CancellationError {
                 // A later selection or Stop owns the state now.
             } catch {
@@ -312,6 +340,7 @@ final class WallpaperModel: ObservableObject {
 
     func stop() {
         loadingTask?.cancel()
+        cancelSystemWallpaperSync()
         loadID = UUID()
         isLoading = false
         engine.stop()
@@ -321,6 +350,7 @@ final class WallpaperModel: ObservableObject {
 
     func shutDown() {
         loadingTask?.cancel()
+        cancelSystemWallpaperSync()
         engine.stop()
         releaseScope()
     }
@@ -344,6 +374,59 @@ final class WallpaperModel: ObservableObject {
     private func configureEngine() {
         engine.configure(target: target, scaling: scaling, isMuted: isMuted,
                          pauseWhenCovered: pauseWhenCovered, volume: Float(volume))
+    }
+
+    private var selectedSystemScreenIDs: [UInt32] {
+        let screens = target == .main ? Array(NSScreen.screens.prefix(1)) : NSScreen.screens
+        return screens.compactMap { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value }
+    }
+
+    private func cancelSystemWallpaperSync() {
+        systemWallpaperRequestID = UUID()
+        systemWallpaperTask?.cancel()
+        systemWallpaperTask = nil
+        isSyncingSystemWallpaper = false
+    }
+
+    private func synchronizeSystemWallpaper() {
+        cancelSystemWallpaperSync()
+        guard syncSystemWallpaper, !isLoading, engine.hasWallpaper,
+              let image = engine.posterImage, let selectedURL else {
+            synchronizedScreenIDs = []
+            return
+        }
+        synchronizedScreenIDs = selectedSystemScreenIDs
+        let requestID = systemWallpaperRequestID
+        let service = systemWallpaperSync
+        let name = selectedURL.deletingPathExtension().lastPathComponent
+        let target = self.target
+        let scaling = self.scaling
+        isSyncingSystemWallpaper = true
+        systemWallpaperTask = Task { [weak self] in
+            defer {
+                if let self, self.systemWallpaperRequestID == requestID {
+                    self.isSyncingSystemWallpaper = false
+                    self.systemWallpaperTask = nil
+                }
+            }
+            do {
+                try Task.checkCancellation()
+                try await service.synchronize(image: image, name: name, target: target, scaling: scaling)
+            } catch is CancellationError {
+                // A newer video, disabled sync, or Stop owns the state now.
+            } catch {
+                guard let self, !Task.isCancelled, self.systemWallpaperRequestID == requestID else { return }
+                if let failure = error as? SystemWallpaperSyncError {
+                    self.renderError = { localizer in
+                        let message = localizer.text(failure.ruKey)
+                        return failure.detail.map { message + "\n\n" + $0 } ?? message
+                    }
+                    self.errorMessage = self.renderError?(self.localizer)
+                } else {
+                    self.reportError("Не удалось обновить системные обои. %@", detail: error.localizedDescription)
+                }
+            }
+        }
     }
 
     private func updatePlayback() {
@@ -378,6 +461,13 @@ final class WallpaperModel: ObservableObject {
         observe(workspace, NSWorkspace.sessionDidBecomeActiveNotification) { $0.policy.sessionInactive = false }
         observe(.default, .NSProcessInfoPowerStateDidChange) {
             $0.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+        observe(.default, NSApplication.didChangeScreenParametersNotification) {
+            // Dock/window geometry changes can also send this notification.
+            // Only a changed set/order of target displays needs a new sync.
+            if $0.syncSystemWallpaper && $0.synchronizedScreenIDs != $0.selectedSystemScreenIDs {
+                $0.synchronizeSystemWallpaper()
+            }
         }
     }
 

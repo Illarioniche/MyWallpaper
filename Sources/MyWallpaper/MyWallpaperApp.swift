@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var settings = SettingsMenuController(model: model)
     private var updateTimer: Timer?
     private var updateCheckTask: Task<Void, Never>?
+    private var terminationTask: Task<Void, Never>?
     private var subscriptions = Set<AnyCancellable>()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -38,6 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.onError = { [weak self] in self?.showWindow() }
         settings.onOpenSettings = { [weak self] in self?.showSettings() }
         settings.onOpenUpdates = { [weak self] in self?.showUpdates() }
+        settings.onOpenScreenSaver = { [weak self] in
+            self?.navigation.section = .screenSaver
+            self?.showWindow()
+        }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = AppIconArtwork.menuBarImage()
         item.button?.toolTip = model.localizer.text("MyWallpaper — живые обои")
@@ -52,6 +57,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard model.screenSaver.isWorking else { return .terminateNow }
+        // Finish pending library operations before quitting, including cleanup
+        // of staging folders when a large video is still being copied.
+        navigation.section = .screenSaver
+        showWindow()
+        if terminationTask == nil {
+            terminationTask = Task { [weak self] in
+                guard let self else { return }
+                for await busy in self.model.screenSaver.$isWorking.values {
+                    if !busy {
+                        self.terminationTask = nil
+                        sender.reply(toApplicationShouldTerminate: self.model.screenSaver.failure == nil)
+                        break
+                    }
+                }
+            }
+        }
+        return .terminateLater
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showWindow()
@@ -73,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         updateTimer?.invalidate()
         updateCheckTask?.cancel()
+        terminationTask?.cancel()
         subscriptions.removeAll()
         model.shutDown()
     }
@@ -129,8 +156,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func chooseVideo() {
-        navigation.section = .wallpaper
-        model.chooseVideo()
+        if navigation.section == .screenSaver {
+            model.screenSaver.chooseVideo(localizer: model.localizer)
+        } else {
+            navigation.section = .wallpaper
+            model.chooseVideo()
+        }
     }
     @objc private func togglePlayback() { model.togglePlayback() }
     @objc private func stopWallpaper() { model.stop() }

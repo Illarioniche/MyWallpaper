@@ -28,6 +28,7 @@ struct ControlView: View {
                         }
                         switch navigation.section {
                         case .wallpaper: WallpaperSettingsPane(model: model)
+                        case .screenSaver: ScreenSaverSettingsPane(model: model, screenSaver: model.screenSaver)
                         case .general: GeneralSettingsPane(model: model)
                         case .power: PowerSettingsPane(model: model)
                         case .updates: UpdateSettingsPane(updates: updates, localizer: model.localizer)
@@ -56,8 +57,12 @@ struct ControlView: View {
         }
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first, url.isFileURL else { return false }
-            navigation.section = .wallpaper
-            model.selectVideo(url)
+            if navigation.section == .screenSaver {
+                model.screenSaver.selectVideo(url)
+            } else {
+                navigation.section = .wallpaper
+                model.selectVideo(url)
+            }
             return true
         } isTargeted: { dropTargeted = $0 }
     }
@@ -255,7 +260,9 @@ private struct WallpaperSettingsPane: View {
                         }
                         .controlSize(.large)
                         .disabled(!model.hasWallpaper && !model.isLoading)
-                        .help(model.localizer.text("Вернуть обычные обои macOS"))
+                        .help(model.syncSystemWallpaper
+                              ? model.localizer.text("Остановить видео; системный кадр останется.")
+                              : model.localizer.text("Вернуть обычные обои macOS"))
                         Spacer(minLength: 4)
                         Image(systemName: model.isMuted ? "speaker.slash" : "speaker.wave.2")
                             .font(.system(size: 13))
@@ -295,6 +302,22 @@ private struct WallpaperSettingsPane: View {
                     .labelsHidden()
                     .frame(width: 176)
                 }
+                SettingsDivider()
+                SettingsToggle(title: model.localizer.text("Системный фон из видео"),
+                               detail: model.localizer.text("Сохранять кадр видео как обои macOS. Он останется после выхода из приложения."),
+                               symbol: "photo.on.rectangle", color: .teal,
+                               isOn: $model.syncSystemWallpaper)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.localizer.text("Применяется к текущему рабочему столу на выбранных экранах. macOS может отключить показ на всех пространствах Spaces."))
+                    if model.isSyncingSystemWallpaper {
+                        ProgressView(model.localizer.text("Обновляем системный фон…"))
+                            .controlSize(.small)
+                    }
+                }
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 60).padding(.trailing, 16).padding(.bottom, 16)
             }
         }
     }

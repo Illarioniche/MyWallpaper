@@ -43,8 +43,14 @@ enum RenderUI {
         guard case .upToDate = updates.state else {
             throw PreviewFailure(message: "The current-version fixture was not accepted.")
         }
+        let libraryFixtures = output.appendingPathComponent("ScreenSaverPreview-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: libraryFixtures) }
+        let template = output.deletingLastPathComponent().appendingPathComponent("MyWallpaper.saver")
         let model = WallpaperModel(preferences: preferences, loginItems: loginItems,
-                                   powerMonitor: PreviewPowerMonitor(), updates: updates)
+                                   powerMonitor: PreviewPowerMonitor(), updates: updates,
+                                   screenSaver: ScreenSaverController(templateURL: template,
+                                    library: ScreenSaverLibrary(rootURL: libraryFixtures.appendingPathComponent("Saved")),
+                                    openInstaller: { _ in false }))
         defer {
             model.shutDown()
         }
@@ -59,6 +65,26 @@ enum RenderUI {
             }
         }
         guard !model.hasWallpaper else { throw PreviewFailure(message: "UI preview unexpectedly enabled wallpaper.") }
+        if let video = model.selectedURL {
+            model.screenSaver.selectVideo(video)
+            let deadline = Date().addingTimeInterval(15)
+            while model.screenSaver.isPreparing && Date() < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            guard model.screenSaver.thumbnail != nil else {
+                throw PreviewFailure(message: "Could not prepare the screen saver preview.")
+            }
+            if model.screenSaver.hasTemplate {
+                for name in ["Северное сияние", "Лунный берег"] {
+                    model.screenSaver.name = name
+                    await model.screenSaver.saveToLibrary()
+                    guard model.screenSaver.failure == nil else {
+                        throw PreviewFailure(message: "Could not create the isolated screen saver library fixture.")
+                    }
+                }
+            }
+        }
+        await model.screenSaver.reloadLibrary()
 
         // Keep the empty state independent of the optional video thumbnail.
         let emptyDomain = "MyWallpaperUIEmptyPreview.\(UUID().uuidString)"
@@ -75,7 +101,11 @@ enum RenderUI {
                                             transport: { _ in currentResponse })
         await emptyUpdates.checkNow()
         let emptyModel = WallpaperModel(preferences: emptyPreferences, loginItems: emptyLoginItems,
-                                        powerMonitor: PreviewPowerMonitor(), updates: emptyUpdates)
+                                        powerMonitor: PreviewPowerMonitor(), updates: emptyUpdates,
+                                        screenSaver: ScreenSaverController(templateURL: template,
+                                         library: ScreenSaverLibrary(rootURL: libraryFixtures.appendingPathComponent("Empty")),
+                                         openInstaller: { _ in false }))
+        await emptyModel.screenSaver.reloadLibrary()
         defer {
             emptyModel.shutDown()
         }
@@ -94,11 +124,29 @@ enum RenderUI {
                 let emptyDestination = output.appendingPathComponent("ui-empty-\(theme)\(variant.suffix).png")
                 try await capture(emptyModel, section: .wallpaper, scheme: scheme,
                                   size: variant.size, to: emptyDestination)
+                try await capture(emptyModel, section: .screenSaver, scheme: scheme, size: variant.size,
+                                  to: output.appendingPathComponent("ui-screenSaver-empty-\(theme)\(variant.suffix).png"))
             }
         }
         try await renderUpdateStates(output: output, sizes: sizes)
         try await renderLoginStates(output: output)
         try await renderLocalizedAudioStates(model: model, output: output)
+        if let video = model.selectedURL {
+            model.screenSaver.beginCreating()
+            model.screenSaver.selectVideo(video)
+            let deadline = Date().addingTimeInterval(15)
+            while model.screenSaver.isPreparing && Date() < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            for language in [AppLanguage.russian, .english] {
+                model.language = language
+                for (theme, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
+                    try await capture(model, section: .screenSaver, scheme: scheme,
+                                      size: NSSize(width: 820, height: 616),
+                                      to: output.appendingPathComponent("ui-screenSaver-create-\(language.rawValue)-\(theme).png"))
+                }
+            }
+        }
     }
 
     @MainActor

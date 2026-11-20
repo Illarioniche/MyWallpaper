@@ -70,8 +70,33 @@ xcrun swiftc -parse-as-library -swift-version 6 \
 "$BUILD_ROOT/generate-icon" "$BUILD_ROOT/MyWallpaper.iconset" \
     "$APP_PATH/Contents/Resources/AppIcon.icns" "$BUILD_ROOT/app-icon-preview1024.png"
 
+"$PROJECT_ROOT/scripts/build-screensaver.sh" "$@"
+mkdir -p "$APP_PATH/Contents/PlugIns"
+SAVER_PATH="$APP_PATH/Contents/PlugIns/MyWallpaper.saver"
+SAVER_STAGE="$(mktemp -d "$BUILD_ROOT/screensaver-embed.XXXXXX")"
+cleanup_saver_stage() {
+    local status=$?
+    trap - EXIT
+    if [[ ! -e "$SAVER_PATH" && -e "$SAVER_STAGE/previous.saver" ]]; then
+        mv "$SAVER_STAGE/previous.saver" "$SAVER_PATH" || exit 1
+    fi
+    rm -rf -- "$SAVER_STAGE"
+    exit "$status"
+}
+trap cleanup_saver_stage EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+/usr/bin/ditto "$BUILD_ROOT/MyWallpaper.saver" "$SAVER_STAGE/MyWallpaper.saver"
+/usr/bin/codesign --verify --strict "$SAVER_STAGE/MyWallpaper.saver"
+if [[ -e "$SAVER_PATH" || -L "$SAVER_PATH" ]]; then
+    mv "$SAVER_PATH" "$SAVER_STAGE/previous.saver"
+fi
+mv "$SAVER_STAGE/MyWallpaper.saver" "$SAVER_PATH"
+
+# The nested .saver is signed first; signing the outer app seals that signature.
 /usr/bin/codesign --force --sign - "$APP_PATH"
-/usr/bin/codesign --verify --strict "$APP_PATH"
+/usr/bin/codesign --verify --strict "$SAVER_PATH"
+/usr/bin/codesign --verify --deep --strict "$APP_PATH"
 /usr/bin/plutil -lint "$APP_PATH/Contents/Info.plist"
 
 printf '\nГотово: %s\n' "$APP_PATH"

@@ -9,6 +9,7 @@
     <a href="#installation">Installation</a> ·
     <a href="#features">Features</a> ·
     <a href="#getting-started">Getting started</a> ·
+    <a href="#video-screen-saver-experimental">Screen saver</a> ·
     <a href="#updates">Updates</a> ·
     <a href="#for-developers">For developers</a>
   </p>
@@ -26,7 +27,9 @@
 - **Smart pause.** Playback pauses separately on each display when windows cover the desktop.
 - **Always within reach.** Menu bar controls, wallpaper restoration, and launch at login.
 - **Multiple displays.** Use all displays or just the main one, with Fill or Fit scaling.
+- **System wallpaper from video.** Optionally save a frame as your regular macOS wallpaper; it stays after you stop the video or quit the app.
 - **New versions nearby.** Check GitHub for updates, see an in-app notice, and download a DMG through your browser.
+- **Video screen saver library.** Save variants with meaningful names, rename or delete them, and choose which to install in macOS. Currently experimental.
 
 ## Installation
 
@@ -50,9 +53,31 @@ Under **General → App Language**, choose **System**, **Русский**, or **
 
 In **Audio**, adjust the volume from **0 to 100%**. **Mute** works independently: it temporarily silences the video while keeping your chosen volume. A volume of **0%** is also silent, even when Mute is off.
 
-Closing the window keeps the wallpaper running in the menu bar. **Pause** preserves the current frame; **Turn Off** restores your regular macOS wallpaper.
+Under **Wallpaper → Appearance**, you can enable **System Wallpaper from Video**; it is off by default. The app saves a frame from the selected video as a still macOS wallpaper and updates it when you change the video, scaling, selected displays, or connected monitors. The frame applies to the current desktop on the selected displays; macOS may turn off Show on All Spaces when it is updated. You can turn that option back on manually in macOS Wallpaper settings if desired. Automatic application to every Space and display on the lock screen are not guaranteed. MyWallpaper continues to provide the animation. Turning this setting off stops future updates and leaves the last saved frame in place.
+
+Closing the window keeps the wallpaper running in the menu bar. **Pause** preserves the current frame; **Turn Off** stops the video and reveals your regular macOS wallpaper. If you saved a system wallpaper frame from the video, that frame stays after you stop playback or quit the app.
 
 <img src="docs/images/power-light.png" alt="Power settings: animation on external power, still wallpaper on battery, and automatic pause" width="780">
+
+## Video screen saver (experimental)
+
+At the top of **Screen Saver**, **My Screen Savers** lists your saved variants with thumbnails and names.
+
+1. In **New Screen Saver**, enter a meaningful name and click **Choose Video**, or use **Use Current Wallpaper** to take the file already selected for your wallpaper.
+2. Choose scaling and animation settings for external power and battery. These settings belong to the screen saver: by default, it animates on external power and shows a still frame on battery or in Low Power Mode.
+3. Click **Save to Library**. The app stores the screen saver with a copy of its video; there is no need to choose a folder or manage files.
+4. Find the variant you want in **My Screen Savers** and click **Install…**. Confirm installation in macOS. Different screen savers can be installed together; when reinstalling the same one, confirm replacement of its previous copy.
+5. Click **Open Screen Saver Settings**, select your installed screen saver by name, and check its preview. In macOS 26 and later, open **Wallpaper → Screen Saver…** and choose **Custom** in the **Use Screen Saver** row. Scroll down **inside the dialog** to **Other** and click **Show All** if needed. In macOS 14–15, open **Screen Saver → Other** and expand the full list if needed; in macOS 13, find it in the thumbnail list under **Screen Saver**. [Apple's instructions](https://support.apple.com/en-om/guide/mac-help/mchl4b68853d/mac).
+
+Use an entry's menu to rename or delete a saved variant. Deletion requires confirmation and removes only that library entry and its video copy. **The original video and any screen saver already installed in macOS are not deleted.** Renaming updates the library name immediately; reinstall that screen saver to update its name in macOS.
+
+The installed screen saver runs independently of MyWallpaper; you can quit the app. It is **always muted**, regardless of the wallpaper volume. **Use Current Wallpaper** takes the selected video once; later wallpaper changes do not change saved screen savers. To use a different video or settings, save a new variant and install it from the library.
+
+Existing library entries are preserved. To update one, click **Install…** again: the app prepares the screen saver using its saved video and the current version of the bundled player. There is no need to recreate the entry or select the original file again.
+
+Discovery of two independently installed screen savers was verified on macOS 26.7.1: after reopening System Settings, the system catalog returned both entries with their user-defined names. Their presence in the system screen saver picker was also confirmed. **If the new screen saver does not appear, close and reopen System Settings.**
+
+**This feature is experimental.** The System Settings preview and behavior on the actual lock screen still need verification; behavior depends on the macOS version and its support for third-party screen savers. A message saying the installer opened does not confirm installation is complete: check your chosen screen saver in System Settings. Video behind the password field is not supported. The login screen and FileVault unlock screen are unchanged. You control installation and screen saver selection; the app does not change lock settings.
 
 ## Updates
 
@@ -116,7 +141,18 @@ By default, the script builds for your Mac's architecture. To build a universal 
 ./scripts/build-app.sh --universal
 ```
 
-The script builds arm64 and x86_64 separately, combines them with `lipo`, adds icons, and signs the final `.app` with a local ad-hoc signature. A local build requires neither paid Apple Developer membership nor `sudo`. You can open the project in Xcode using `Package.swift`.
+The script builds arm64 and x86_64 separately, combines them with `lipo`, adds icons, and embeds the screen saver template in `Contents/PlugIns/MyWallpaper.saver`. The nested screen saver is signed first, then the final `.app` receives a local ad-hoc signature. A local build requires neither paid Apple Developer membership nor `sudo`. You can open the project in Xcode using `Package.swift`.
+
+### Building the screen saver template
+
+```sh
+./scripts/build-screensaver.sh
+./scripts/build-screensaver.sh --universal
+```
+
+The first command builds for your Mac's architecture; the second builds arm64 and x86_64. The result is `.build/MyWallpaper.saver`, a standalone Mach-O bundle with a `ScreenSaverView` from the [Screen Saver framework](https://developer.apple.com/documentation/screensaver). Its version comes from `Resources/Info.plist`; the build verifies its signature and architectures. The template contains no video and is intended for the app's exporter. Without exported resources, it shows a static background with guidance. The script does not install anything, open System Settings, or run the screen saver.
+
+The app library is stored in `~/Library/Application Support/MyWallpaper/ScreenSavers`. Each entry has a UUID directory and its own metadata. Before installation, the app prepares a newly signed bundle using the saved resources and the current runtime. The UUID determines stable, unique bundle identifiers, class names, and installer filenames (`MyWallpaper-UUID.saver`); the user-facing name is written to `CFBundleName` and `CFBundleDisplayName`. Resources include standard `thumbnail.png` and `thumbnail@2x.png` previews for the system list. Preparing an installation does not alter the existing library entry. Deleting an entry frees its internal storage without affecting a separately installed system copy.
 
 ### Building a DMG
 
@@ -129,8 +165,8 @@ This command builds a universal app and creates a compressed disk image for drag
 ```text
 dist/
 ├── MyWallpaper.app
-├── MyWallpaper-0.6.1-universal.dmg
-└── MyWallpaper-0.6.1-universal.dmg.sha256
+├── MyWallpaper-0.7.0-universal.dmg
+└── MyWallpaper-0.7.0-universal.dmg.sha256
 ```
 
 The image contains the app, a link to Applications, and brief installation instructions. The version comes from `Info.plist`; the architecture comes from the built executable. To package an existing build without recompiling:
@@ -144,7 +180,7 @@ The filename reflects the actual architectures: `universal`, `arm64`, or `x86_64
 To verify a downloaded image, run this from the directory containing both files:
 
 ```sh
-shasum -a 256 -c MyWallpaper-0.6.1-universal.dmg.sha256
+shasum -a 256 -c MyWallpaper-0.7.0-universal.dmg.sha256
 ```
 
 The universal build includes Intel, but launch validation has been performed on Apple Silicon. Distribution with a verified developer identity separately requires Developer ID signing and Apple notarization.
@@ -168,7 +204,7 @@ The demo MP4 and intermediate images are saved in `.build/readme/`; the video is
 ### Detailed usage
 
 1. Click **Choose Video** or drag an MP4/MOV into the app window.
-2. Choose a section in the sidebar: **Wallpaper**, **General**, **Power**, or **Updates**. These contain video selection, display, and scaling; startup and audio settings; power behavior; and update checks and downloads.
+2. Choose a section in the sidebar: **Wallpaper**, **General**, **Power**, **Screen Saver**, or **Updates**. These contain video selection, display, and scaling; startup and audio settings; power behavior; the system screen saver library; and update checks and downloads.
 3. Control playback from the window or menu bar icon. Closing the window leaves the wallpaper running.
 4. Pause stops the video on its current frame. Turning the wallpaper off or quitting restores your regular desktop.
 
@@ -220,7 +256,7 @@ To check the interface without showing windows or enabling wallpaper:
 ./scripts/render-ui.sh "/absolute/path/video.mp4"
 ```
 
-The optional video path is used only for a thumbnail. The script renders all four sections and the empty state in light and dark appearances, at normal and minimum window sizes. Update fixtures separately cover an available release, an in-progress check, an offline error, and an up-to-date app; the banner is saved separately as `ui-update-banner-wallpaper-*.png`. Standard README screenshots do not announce fictional releases. Additional fixtures cover login guidance for missing registration, a read-only disk, and a registration error. All GitHub responses and login services are fake: there are no real network requests or login-item changes. Images are saved as `.build/verification/ui-*.png`, with `-compact` for compact variants. Settings are isolated and no desktop screenshots are taken.
+The video path is optional. A supplied demo or local video is used for thumbnails and, when a built screen saver template is available, a temporary library with two entries in `.build/verification/ScreenSaverPreview-UUID`. The bundles receive a local ad-hoc signature through `codesign`; the temporary library is removed when rendering finishes. The script renders the app sections, screen saver list, empty library, and creation form in light and dark appearances, including compact variants. Update fixtures separately cover an available release, an in-progress check, an offline error, and an up-to-date app; the banner is saved separately as `ui-update-banner-wallpaper-*.png`. Standard README screenshots do not announce fictional releases. Additional fixtures cover login guidance for missing registration, a read-only disk, and a registration error. GitHub responses, login services, and the screen saver installer are fake: there are no real network requests, login-item changes, screen saver installations, or System Settings launches. Images are saved as `.build/verification/ui-*.png`, with `-compact` for compact variants. Settings are isolated and no desktop screenshots are taken.
 
 ### How it works
 
