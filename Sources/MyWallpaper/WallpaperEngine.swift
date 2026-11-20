@@ -36,7 +36,7 @@ final class WallpaperEngine: ObservableObject {
         return monitor
     }()
 
-    func load(url: URL) async throws {
+    func load(url: URL, beforeCommit: (() -> Void)? = nil) async throws {
         loadGeneration += 1
         let generation = loadGeneration
         let candidate = AVURLAsset(url: url)
@@ -63,6 +63,7 @@ final class WallpaperEngine: ObservableObject {
         try Task.checkCancellation()
         guard generation == loadGeneration else { throw CancellationError() }
 
+        beforeCommit?()
         asset = candidate
         posterImage = poster
         hasWallpaper = true

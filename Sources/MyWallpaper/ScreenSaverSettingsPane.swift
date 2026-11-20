@@ -12,6 +12,7 @@ struct ScreenSaverSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            ScreenSaverSyncPane(model: model)
             if let failure = screenSaver.failure {
                 message(localizer.text(failure.ruKey), detail: failure.detail, isError: true)
             }

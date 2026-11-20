@@ -9,6 +9,7 @@
     <a href="#installation">Installation</a> ·
     <a href="#features">Features</a> ·
     <a href="#getting-started">Getting started</a> ·
+    <a href="#wallpaper-library">Wallpaper library</a> ·
     <a href="#video-screen-saver-experimental">Screen saver</a> ·
     <a href="#updates">Updates</a> ·
     <a href="#for-developers">For developers</a>
@@ -23,6 +24,7 @@
 ## Features
 
 - **Your video on your desktop.** Local MP4, MOV, and other formats supported by macOS, playing in a continuous loop.
+- **Wallpaper collection.** Cards with thumbnails, custom names, and saved settings: add videos, switch between them, rename, and delete.
 - **Battery-aware playback.** Animated on external power and still on battery by default. Both modes are configurable.
 - **Smart pause.** Playback pauses separately on each display when windows cover the desktop.
 - **Always within reach.** Menu bar controls, wallpaper restoration, and launch at login.
@@ -30,6 +32,7 @@
 - **System wallpaper from video.** Optionally save a frame as your regular macOS wallpaper; it stays after you stop the video or quit the app.
 - **New versions nearby.** Check GitHub for updates, see an in-app notice, and download a DMG through your browser.
 - **Video screen saver library.** Save variants with meaningful names, rename or delete them, and choose which to install in macOS. Currently experimental.
+- **Wallpaper and screen saver together.** Optionally synchronize the video, scaling, and power settings through a separate MyWallpaper — Sync screen saver.
 
 ## Installation
 
@@ -38,13 +41,13 @@
 1. Download the `.dmg` from [GitHub Releases](https://github.com/Illarioniche/MyWallpaper/releases).
 2. Open the disk image and drag **MyWallpaper.app → Applications**.
 3. Eject the disk image and open **MyWallpaper** from Applications.
-4. Click **Choose Video** or drag an MP4/MOV into the app window.
+4. In **Wallpaper**, click **Add Video** or drag an MP4/MOV into the app window.
 
 > **Opening the app for the first time.** This build has a local ad-hoc signature and has not been notarized by Apple. If macOS cannot verify the developer or the app, first attempt to open it, then go to **System Settings → Privacy & Security → Open Anyway** and confirm if you trust the download source. [Apple's instructions](https://support.apple.com/102445).
 
 ## Getting started
 
-1. In **Wallpaper**, choose a video, display, and scaling mode.
+1. In **Wallpaper → My Wallpapers**, add a video and configure it using **⋯ → Configure** on its card.
 2. In **Power**, keep the default energy-saving settings or choose how playback behaves on external power and battery.
 3. In **General**, optionally enable launch at login. Do this from the installed copy in Applications.
 4. In **Updates**, check your app version and configure automatic update checks.
@@ -59,9 +62,21 @@ Closing the window keeps the wallpaper running in the menu bar. **Pause** preser
 
 <img src="docs/images/power-light.png" alt="Power settings: animation on external power, still wallpaper on battery, and automatic pause" width="780">
 
+## Wallpaper library
+
+The **Wallpaper** section contains **My Wallpapers**. Adding a video saves a separate copy and thumbnail in the app's library; there is no need to choose a folder or manage internal files. The original stays in place. Saved wallpapers remain available after restarting, even if you later move the original video.
+
+- **Apply** activates a video with its saved settings. Its card indicates the currently selected wallpaper.
+- **⋯ → Configure** opens that entry's display, scaling, mute and volume, animation on external power and battery, covered-desktop and Low Power Mode pauses, and system wallpaper sync settings. **Save** updates the entry and immediately applies changes if it is currently selected. Configuring another entry does not switch the current wallpaper.
+- **⋯ → Rename** changes the card's name. **Delete** asks for confirmation, then removes the entry and its internal video copy. The original video is preserved. Deleting the selected wallpaper stops playback and prevents that entry from being restored at launch. Any previously saved system wallpaper frame remains.
+
+Changes in **General**, **Power**, the current wallpaper controls, and the menu bar take effect immediately and persist as the app's current settings. To store them in the selected library entry, click **Save Current Settings** above the collection. Otherwise, choosing **Apply** again restores the settings saved in that entry.
+
+After an update, an existing wallpaper continues to work as before; the app does not copy it automatically. Choose **Save Current Wallpaper** to add it to the library with its current settings.
+
 ## Video screen saver (experimental)
 
-At the top of **Screen Saver**, **My Screen Savers** lists your saved variants with thumbnails and names.
+Under **Screen Saver**, **My Screen Savers** lists your saved variants with thumbnails and names. The section above it can synchronize the screen saver with your wallpaper.
 
 1. In **New Screen Saver**, enter a meaningful name and click **Choose Video**, or use **Use Current Wallpaper** to take the file already selected for your wallpaper.
 2. Choose scaling and animation settings for external power and battery. These settings belong to the screen saver: by default, it animates on external power and shows a still frame on battery or in Low Power Mode.
@@ -78,6 +93,20 @@ Existing library entries are preserved. To update one, click **Install…** agai
 Discovery of two independently installed screen savers was verified on macOS 26.7.1: after reopening System Settings, the system catalog returned both entries with their user-defined names. Their presence in the system screen saver picker was also confirmed. **If the new screen saver does not appear, close and reopen System Settings.**
 
 **This feature is experimental.** The System Settings preview and behavior on the actual lock screen still need verification; behavior depends on the macOS version and its support for third-party screen savers. A message saying the installer opened does not confirm installation is complete: check your chosen screen saver in System Settings. Video behind the password field is not supported. The login screen and FileVault unlock screen are unchanged. You control installation and screen saver selection; the app does not change lock settings.
+
+### Synchronize with wallpaper
+
+1. Choose an **MP4 or MOV** wallpaper, then open **Screen Saver → Wallpaper and Screen Saver Together**.
+2. Enable **Sync with Wallpaper**. The app prepares a separate copy of the selected video with its current scaling and power settings.
+3. Click **Install MyWallpaper — Sync…** and confirm the macOS installer. Then select **MyWallpaper — Sync** in System Settings. In macOS 26, open **Wallpaper → Screen Saver… → Use Screen Saver → Custom → Other** and click **Show All** if needed.
+
+Once installation is detected, setup collapses into a **Screen Saver Installed** status. The **⋯** menu keeps **Reinstall…**, a shortcut to System Settings, and the setup instructions. If you delete the screen saver from macOS, the install button returns when you switch back to the app. This status confirms installation; you still choose the active screen saver in System Settings.
+
+Install and select this screen saver once. When you change the wallpaper, scaling, or power settings, MyWallpaper updates the saved data that the screen saver reads on its next start. Ordinary entries in **My Screen Savers** remain independent; selecting one of them in macOS does not automatically enable synchronization.
+
+The screen saver is always muted. Manual wallpaper pause, desktop window coverage, and the main-display selection do not carry over: macOS controls which displays show the screen saver. Turning off sync, stopping wallpaper playback, quitting the app, or deleting the wallpaper library entry leaves the last saved video available to the screen saver. Synchronization is off by default.
+
+**This mode is experimental:** the linked screen saver's System Settings preview and behavior on the actual lock screen still need verification. Opening the installer does not confirm that macOS completed installation or selected the screen saver; you need to confirm those steps yourself.
 
 ## Updates
 
@@ -250,6 +279,23 @@ The integration smoke test requires an active graphical macOS session and a loca
 
 The test checks video restoration after relaunch, manual pause, and desktop coverage with real test windows. It saves images of its own window to `.build/verification/empty.png` and `loaded.png`. Leave part of the desktop visible for visibility checks; the test does not close other apps' windows. To compile without opening windows, use `./scripts/smoke-test.sh --build-only`.
 
+A separate wallpaper library integration test checks import, applying saved entries with their settings, restoration, and deletion:
+
+```sh
+./scripts/test-wallpaper-library.sh "/path/to/video.mp4"
+```
+
+It requires a graphical macOS session and temporarily displays muted video in its own desktop test windows. Storage and preferences are isolated from the app; the system wallpaper, existing collections, and original video remain untouched. The test windows close after validation. To compile without running it, use `./scripts/test-wallpaper-library.sh --build-only`.
+
+To check the linked screen saver in hidden test windows:
+
+```sh
+./scripts/build-screensaver.sh
+./scripts/test-screensaver-sync.sh "/path/to/video.mp4"
+```
+
+This creates temporary media and an installer, switches videos and settings, checks recovery from unavailable data, and verifies compatibility with ordinary screen savers. It does not install a saver or lock macOS; it does not replace testing the System Settings preview.
+
 To check the interface without showing windows or enabling wallpaper:
 
 ```sh
@@ -260,7 +306,7 @@ The video path is optional. A supplied demo or local video is used for thumbnail
 
 ### How it works
 
-Separate AppKit windows sit at desktop level below Finder icons and let mouse clicks pass through. On each display, an `AVQueuePlayer` with an `AVPlayerLooper` plays the video. The system wallpaper image stays unchanged: the app overlays its video while running.
+Separate AppKit windows sit at desktop level below Finder icons and let mouse clicks pass through. On each display, an `AVQueuePlayer` with an `AVPlayerLooper` plays the video. By default, the system wallpaper image stays unchanged while the app overlays its video. Enabling System Wallpaper from Video also saves a frame as the static macOS wallpaper using `NSWorkspace.setDesktopImageURL`; this frame remains after quitting MyWallpaper.
 
 Launch at login uses [SMAppService.mainApp](https://developer.apple.com/documentation/servicemanagement/smappservice). Visibility is tracked through [AppKit window occlusion notifications](https://developer.apple.com/documentation/appkit/nswindow/didchangeocclusionstatenotification), supplemented by checking window rectangles once a second. The additional check runs only when pause-on-hidden is enabled and animation is allowed. It reads window geometry; screen recording, window content access, and Accessibility permission are not required.
 
