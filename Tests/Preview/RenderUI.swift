@@ -114,6 +114,8 @@ enum RenderUI {
         }
         await model.screenSaver.reloadLibrary()
 
+        try await renderReadmeScreenshots(model: model, output: output)
+
         // Keep the empty state independent of the optional video thumbnail.
         let emptyDomain = "MyWallpaperUIEmptyPreview.\(UUID().uuidString)"
         guard let emptyDefaults = UserDefaults(suiteName: emptyDomain) else {
@@ -246,6 +248,66 @@ enum RenderUI {
         guard !model.hasWallpaper && !model.isPlaying else {
             throw PreviewFailure(message: "The linked screen saver preview unexpectedly enabled desktop playback.")
         }
+    }
+
+    @MainActor
+    private static func renderReadmeScreenshots(model: WallpaperModel, output: URL) async throws {
+        guard let active = model.wallpaperLibrary.entries.first(where: { $0.id == model.activeWallpaperID }),
+              let exception = model.wallpaperLibrary.entries.first(where: { !$0.options.usesGlobalPowerRules }) else { return }
+        let originalLanguage = model.language
+        let originalOptions = model.currentWallpaperOptions
+        let originalEntries = model.wallpaperLibrary.entries
+        var editorOptions = originalOptions
+        editorOptions.syncSystemWallpaper = false
+        guard await model.updateWallpaper(active, options: editorOptions) else {
+            throw PreviewFailure(message: "Could not prepare the README editor fixture.")
+        }
+
+        for (code, language) in [("ru", AppLanguage.russian), ("en", AppLanguage.english)] {
+            model.language = language
+            for entry in originalEntries {
+                let name: String
+                if entry.id == active.id {
+                    name = "Aurora"
+                } else if entry.id == exception.id {
+                    name = code == "ru" ? "Aurora — свой режим" : "Aurora — custom rules"
+                } else {
+                    name = code == "ru" ? "Aurora — тихий вечер" : "Aurora — quiet evening"
+                }
+                guard await model.wallpaperLibrary.rename(entry, name: name) != nil else {
+                    throw PreviewFailure(message: "Could not localize the README library fixture.")
+                }
+            }
+            guard let current = model.wallpaperLibrary.entries.first(where: { $0.id == active.id }),
+                  let custom = model.wallpaperLibrary.entries.first(where: { $0.id == exception.id }) else {
+                throw PreviewFailure(message: "The README library fixture is incomplete.")
+            }
+            for (theme, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
+                try await capture(model, section: .wallpaper, scheme: scheme,
+                                  size: NSSize(width: 980, height: 736),
+                                  to: output.appendingPathComponent("readme-wallpaper-\(code)-\(theme).png"))
+                try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary,
+                                      entry: current, onOpenPower: {}),
+                                      scheme: scheme, size: NSSize(width: 560, height: 560),
+                                      to: output.appendingPathComponent("readme-wallpaper-editor-\(code)-\(theme).png"))
+                try await capture(model, section: .power, scheme: scheme,
+                                  size: NSSize(width: 820, height: 616),
+                                  to: output.appendingPathComponent("readme-power-\(code)-\(theme).png"))
+                try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary,
+                                      entry: custom, onOpenPower: {}),
+                                      scheme: scheme, size: NSSize(width: 560, height: 560), scrollToBottom: true,
+                                      to: output.appendingPathComponent("readme-wallpaper-power-exception-\(code)-\(theme).png"))
+            }
+        }
+        for entry in originalEntries {
+            guard await model.wallpaperLibrary.rename(entry, name: entry.name) != nil else {
+                throw PreviewFailure(message: "Could not restore the UI verification fixture.")
+            }
+        }
+        guard await model.updateWallpaper(active, options: originalOptions), !model.hasWallpaper && !model.isPlaying else {
+            throw PreviewFailure(message: "The README render changed playback or could not restore its fixture.")
+        }
+        model.language = originalLanguage
     }
 
     @MainActor

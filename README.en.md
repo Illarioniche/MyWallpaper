@@ -17,8 +17,8 @@
 </div>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wallpaper-dark.png">
-  <img src="docs/images/wallpaper-light.png" alt="MyWallpaper: Aurora wallpaper preview, playback controls, and display selection" width="980">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wallpaper-en-dark.png">
+  <img src="docs/images/wallpaper-en-light.png" alt="MyWallpaper: wallpaper collection, compact playback controls, and a card with custom power rules" width="980">
 </picture>
 
 ## Features
@@ -47,32 +47,51 @@
 
 ## Getting started
 
-1. In **Wallpaper → My Wallpapers**, add a video and configure it using **⋯ → Configure** on its card.
+1. In **Wallpaper → My Wallpapers**, add a video and configure it using **⋯ → Customize** on its card.
 2. In **Power**, keep the default energy-saving settings or choose how playback behaves on external power and battery.
 3. In **General**, optionally enable launch at login. Do this from the installed copy in Applications.
 4. In **Updates**, check your app version and configure automatic update checks.
 
 Under **General → App Language**, choose **System**, **Русский**, or **English**. Your choice is saved and takes effect immediately, without restarting the app. System mode uses the first supported language in your macOS preferred-language list, falling back to English if none match.
 
-In **Wallpaper → Configure → Audio**, adjust the volume from **0 to 100%**. **Mute** works independently: it temporarily silences the video while keeping your chosen volume. A volume of **0%** is also silent, even when Mute is off.
+In **Wallpaper → Customize → Audio**, adjust the volume from **0 to 100%**. **Mute** works independently: it temporarily silences the video while keeping your chosen volume. A volume of **0%** is also silent, even when Mute is off.
 
-Under **Wallpaper → Configure → Appearance**, you can enable **System Wallpaper from Video**; it is off by default. The app saves a frame from the selected video as a still macOS wallpaper and updates it when you change the video, scaling, selected displays, or connected monitors. The frame applies to the current desktop on the selected displays; macOS may turn off Show on All Spaces when it is updated. You can turn that option back on manually in macOS Wallpaper settings if desired. Automatic application to every Space and display on the lock screen are not guaranteed. MyWallpaper continues to provide the animation. Turning this setting off stops future updates and leaves the last saved frame in place.
+Under **Wallpaper → Customize → Appearance**, you can enable **System Wallpaper from Video**; it is off by default. The app saves a frame from the selected video as a still macOS wallpaper and updates it when you change the video, scaling, selected displays, or connected monitors. The frame applies to the current desktop on the selected displays; macOS may turn off Show on All Spaces when it is updated. You can turn that option back on manually in macOS Wallpaper settings if desired. Automatic application to every Space and display on the lock screen are not guaranteed. MyWallpaper continues to provide the animation. Turning this setting off stops future updates and leaves the last saved frame in place.
 
 Closing the window keeps the wallpaper running in the menu bar. **Pause** preserves the current frame; **Turn Off** stops the video and reveals your regular macOS wallpaper. If you saved a system wallpaper frame from the video, that frame stays after you stop playback or quit the app.
-
-<img src="docs/images/power-light.png" alt="Power settings: animation on external power, still wallpaper on battery, and automatic pause" width="780">
 
 ## Wallpaper library
 
 The **Wallpaper** section contains **My Wallpapers**. Adding a video saves a separate copy and thumbnail in the app's library; there is no need to choose a folder or manage internal files. The original stays in place. Saved wallpapers remain available after restarting, even if you later move the original video.
 
 - **Apply** activates a video with its saved settings. Its card indicates the currently selected wallpaper.
-- **⋯ → Configure** opens that entry's display, scaling, mute and volume, animation on external power and battery, covered-desktop and Low Power Mode pauses, and system wallpaper sync settings. **Save** updates the entry and immediately applies changes if it is currently selected. Configuring another entry does not switch the current wallpaper.
+- **⋯ → Customize** opens that entry's display, scaling, mute and volume, animation on external power and battery, covered-desktop and Low Power Mode pauses, and system wallpaper sync settings. **Save** updates the entry and immediately applies changes if it is currently selected. Configuring another entry does not switch the current wallpaper.
 - **⋯ → Rename** changes the card's name. **Delete** asks for confirmation, then removes the entry and its internal video copy. The original video is preserved. Deleting the selected wallpaper stops playback and prevents that entry from being restored at launch. Any previously saved system wallpaper frame remains.
 
-The card, current wallpaper panel and menu bar open the same **Configure** editor. For the active wallpaper it shows the current values; for another video it shows its saved settings. **Save** stores changes, while **Cancel** keeps the existing settings. Quick mute commands also remember their state across app launches.
+The card, current wallpaper panel and menu bar open the same **Wallpaper Settings** editor. For the active wallpaper it shows the current values; for another video it shows its saved settings. **Save** stores changes, while **Cancel** keeps the existing settings. Quick mute commands also remember their state across app launches.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wallpaper-editor-en-dark.png">
+  <img src="docs/images/wallpaper-editor-en-light.png" alt="Unified wallpaper editor with display, scaling, system wallpaper, and audio settings" width="560">
+</picture>
+
+*Appearance, audio, and power for the selected wallpaper, in one editor.*
 
 **Power** defines common rules for external power, battery, Low Power Mode and desktop coverage. New wallpapers follow these rules. To make an exception, turn off **Use Shared Rules** in that wallpaper’s editor and choose its own modes. Switching wallpapers never changes the common rules.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/power-en-dark.png">
+  <img src="docs/images/power-en-light.png" alt="Shared power rules: animation on external power, still wallpaper on battery, and automatic pauses" width="780">
+</picture>
+
+*Set shared rules once in Power.*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wallpaper-power-exception-en-dark.png">
+  <img src="docs/images/wallpaper-power-exception-en-light.png" alt="Per-wallpaper exception with shared rules turned off and individual power and pause controls" width="560">
+</picture>
+
+*Give an individual video its own rules whenever needed.*
 
 On upgrade, previous power preferences seed the common rules, while saved power settings in existing cards remain individual exceptions. Current settings of the active wallpaper that had not been saved to its card are also restored and can be saved through the unified editor. Original videos and saved presets are not automatically overwritten.
 
@@ -222,7 +241,7 @@ The universal build includes Intel, but launch validation has been performed on 
 
 The app, interface, and menu bar icons are drawn in `Sources/MyWallpaper/AppIconArtwork.swift`. The build generates a complete set of `.icns` sizes from the same artwork.
 
-The screenshots in this README use the project's **Aurora** demo landscape, without user files. To reproduce them:
+Both READMEs use the project's **Aurora** demo landscape, without user files. Light and dark screenshots of the collection, unified editor, shared power rules, and an individual exception are generated separately for the Russian and English interfaces. README images follow the reader’s theme automatically. To reproduce them:
 
 ```sh
 ./scripts/render-readme.sh
