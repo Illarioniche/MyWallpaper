@@ -46,10 +46,32 @@ enum RenderUI {
         let libraryFixtures = output.appendingPathComponent("ScreenSaverPreview-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: libraryFixtures) }
         let template = output.deletingLastPathComponent().appendingPathComponent("MyWallpaper.saver")
+        let wallpapers = WallpaperLibraryController(library: WallpaperLibrary(
+            rootURL: libraryFixtures.appendingPathComponent("Wallpapers/Saved")))
+        let syncStore = ScreenSaverSyncStore(rootURL: libraryFixtures.appendingPathComponent("Sync/Saved"))
+        let syncInstallationDirectory = libraryFixtures.appendingPathComponent("InstalledScreenSavers")
+        let syncInstallation = ScreenSaverSyncInstallation(directories: [syncInstallationDirectory])
+        if CommandLine.arguments.count > 2 {
+            let video = URL(fileURLWithPath: CommandLine.arguments[2]).standardizedFileURL
+            for name in ["Ночной сад", "Тихий берег", "Aurora — northern lights over the mountains"] {
+                var options = WallpaperLibraryOptions()
+                options.volume = 0.35
+                options.syncSystemWallpaper = true
+                guard let entry = await wallpapers.addVideo(video, options: options),
+                      let renamed = await wallpapers.rename(entry, name: name) else {
+                    throw PreviewFailure(message: "Could not create the isolated wallpaper library fixture.")
+                }
+                preferences.activeWallpaperID = renamed.id
+            }
+        }
         let model = WallpaperModel(preferences: preferences, loginItems: loginItems,
                                    powerMonitor: PreviewPowerMonitor(), updates: updates,
                                    screenSaver: ScreenSaverController(templateURL: template,
                                     library: ScreenSaverLibrary(rootURL: libraryFixtures.appendingPathComponent("Saved")),
+                                    openInstaller: { _ in false }), wallpaperLibrary: wallpapers,
+                                   screenSaverSync: ScreenSaverSyncController(
+                                    store: syncStore, templateURL: template,
+                                    installationLookup: { syncInstallation.installedBundleURL(syncRootURL: $0) },
                                     openInstaller: { _ in false }))
         defer {
             model.shutDown()
@@ -104,7 +126,12 @@ enum RenderUI {
                                         powerMonitor: PreviewPowerMonitor(), updates: emptyUpdates,
                                         screenSaver: ScreenSaverController(templateURL: template,
                                          library: ScreenSaverLibrary(rootURL: libraryFixtures.appendingPathComponent("Empty")),
-                                         openInstaller: { _ in false }))
+                                         openInstaller: { _ in false }),
+                                        wallpaperLibrary: WallpaperLibraryController(library: WallpaperLibrary(
+                                            rootURL: libraryFixtures.appendingPathComponent("Wallpapers/Empty"))),
+                                        screenSaverSync: ScreenSaverSyncController(
+                                            store: ScreenSaverSyncStore(rootURL: libraryFixtures.appendingPathComponent("Sync/Empty")),
+                                            templateURL: template, openInstaller: { _ in false }))
         await emptyModel.screenSaver.reloadLibrary()
         defer {
             emptyModel.shutDown()
@@ -128,9 +155,12 @@ enum RenderUI {
                                   to: output.appendingPathComponent("ui-screenSaver-empty-\(theme)\(variant.suffix).png"))
             }
         }
-        try await renderUpdateStates(output: output, sizes: sizes)
-        try await renderLoginStates(output: output)
+        try await renderUpdateStates(output: output, sizes: sizes, libraryRoot: libraryFixtures)
+        try await renderLoginStates(output: output, libraryRoot: libraryFixtures)
         try await renderLocalizedAudioStates(model: model, output: output)
+        try await renderWallpaperLibrary(model: model, output: output)
+        try await renderScreenSaverSync(model: model, output: output, store: syncStore,
+                                       installationDirectory: syncInstallationDirectory, template: template)
         if let video = model.selectedURL {
             model.screenSaver.beginCreating()
             model.screenSaver.selectVideo(video)
@@ -146,6 +176,88 @@ enum RenderUI {
                                       to: output.appendingPathComponent("ui-screenSaver-create-\(language.rawValue)-\(theme).png"))
                 }
             }
+        }
+    }
+
+    @MainActor
+    private static func renderScreenSaverSync(model: WallpaperModel, output: URL, store: ScreenSaverSyncStore,
+                                              installationDirectory: URL, template: URL) async throws {
+        guard let video = model.selectedURL else { return }
+        model.syncScreenSaver = true
+        model.synchronizeScreenSaver()
+        await model.screenSaverSync.waitForSynchronization()
+        guard model.screenSaverSync.snapshot != nil, model.screenSaverSync.failure == nil else {
+            throw PreviewFailure(message: "Could not prepare the isolated linked screen saver preview.")
+        }
+        for (code, language) in [("ru", AppLanguage.russian), ("en", .english)] {
+            model.language = language
+            for (theme, scheme) in [("light", ColorScheme.light), ("dark", .dark)] {
+                try await capture(model, section: .screenSaver, scheme: scheme,
+                                  size: NSSize(width: 820, height: 616),
+                                  to: output.appendingPathComponent("ui-saver-sync-ready-\(code)-\(theme).png"))
+            }
+        }
+        if model.screenSaverSync.hasTemplate {
+            // Simulate installation in the isolated preview fixture only.
+            let installer = try await Task.detached { try store.prepareInstaller(templateURL: template) }.value
+            try FileManager.default.createDirectory(at: installationDirectory, withIntermediateDirectories: true)
+            let installed = installationDirectory.appendingPathComponent(installer.lastPathComponent)
+            try FileManager.default.copyItem(at: installer, to: installed)
+            await model.screenSaverSync.refreshInstallation()
+            guard model.screenSaverSync.isInstalled else {
+                throw PreviewFailure(message: "The linked screen saver installation fixture was not detected.")
+            }
+            for (code, language) in [("ru", AppLanguage.russian), ("en", .english)] {
+                model.language = language
+                for (theme, scheme) in [("light", ColorScheme.light), ("dark", .dark)] {
+                    try await capture(model, section: .screenSaver, scheme: scheme,
+                                      size: NSSize(width: 820, height: 616),
+                                      to: output.appendingPathComponent("ui-saver-sync-installed-\(code)-\(theme).png"))
+                }
+            }
+            try FileManager.default.removeItem(at: installed)
+            await model.screenSaverSync.refreshInstallation()
+            guard !model.screenSaverSync.isInstalled else {
+                throw PreviewFailure(message: "A removed linked screen saver still appears installed.")
+            }
+            model.language = .russian
+            try await capture(model, section: .screenSaver, scheme: .dark,
+                              size: NSSize(width: 820, height: 616),
+                              to: output.appendingPathComponent("ui-saver-sync-removed-ru-dark.png"))
+        }
+        let missing = video.deletingLastPathComponent().appendingPathComponent("missing-preview-video.mp4")
+        model.screenSaverSync.synchronize(videoURL: missing, name: "Unavailable preview", options: .init())
+        await model.screenSaverSync.waitForSynchronization()
+        guard model.screenSaverSync.failure != nil else {
+            throw PreviewFailure(message: "The linked screen saver error fixture did not fail.")
+        }
+        model.language = .english
+        try await capture(model, section: .screenSaver, scheme: .light,
+                          size: NSSize(width: 820, height: 616),
+                          to: output.appendingPathComponent("ui-saver-sync-error-en-light.png"))
+        model.screenSaverSync.dismissFailure()
+        model.syncScreenSaver = false
+        guard !model.hasWallpaper && !model.isPlaying else {
+            throw PreviewFailure(message: "The linked screen saver preview unexpectedly enabled desktop playback.")
+        }
+    }
+
+    @MainActor
+    private static func renderWallpaperLibrary(model: WallpaperModel, output: URL) async throws {
+        guard let entry = model.wallpaperLibrary.entries.first else { return }
+        for (code, language) in [("ru", AppLanguage.russian), ("en", AppLanguage.english)] {
+            model.language = language
+            for (theme, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
+                try await capture(model, section: .wallpaper, scheme: scheme,
+                                  size: NSSize(width: 820, height: 616),
+                                  to: output.appendingPathComponent("ui-wallpaper-library-\(code)-\(theme)-compact.png"))
+                try await captureView(WallpaperOptionsSheet(model: model, library: model.wallpaperLibrary, entry: entry),
+                                      scheme: scheme, size: NSSize(width: 560, height: 560),
+                                      to: output.appendingPathComponent("ui-wallpaper-options-\(code)-\(theme)-compact.png"))
+            }
+        }
+        guard !model.hasWallpaper && !model.isPlaying else {
+            throw PreviewFailure(message: "The wallpaper library preview unexpectedly enabled playback.")
         }
     }
 
@@ -183,7 +295,7 @@ enum RenderUI {
     }
 
     @MainActor
-    private static func renderUpdateStates(output: URL, sizes: [(suffix: String, size: NSSize)]) async throws {
+    private static func renderUpdateStates(output: URL, sizes: [(suffix: String, size: NSSize)], libraryRoot: URL) async throws {
         for scenario in PreviewUpdateScenario.allCases {
             let response = try updateResponse(version: scenario == .available ? "1.0.0" : "0.4.0")
             let domain = "MyWallpaperUIUpdatesPreview.\(UUID().uuidString)"
@@ -205,7 +317,12 @@ enum RenderUI {
             })
             let loginItems = LoginItemController(service: PreviewLoginService(), notificationCenter: NotificationCenter())
             let model = WallpaperModel(preferences: preferences, loginItems: loginItems,
-                                       powerMonitor: PreviewPowerMonitor(), updates: updates)
+                                       powerMonitor: PreviewPowerMonitor(), updates: updates,
+                                       wallpaperLibrary: WallpaperLibraryController(library: WallpaperLibrary(
+                                           rootURL: libraryRoot.appendingPathComponent("Wallpapers/Updates-\(scenario.rawValue)"))),
+                                       screenSaverSync: ScreenSaverSyncController(
+                                           store: ScreenSaverSyncStore(rootURL: libraryRoot.appendingPathComponent("Sync/Updates-\(scenario.rawValue)")),
+                                           templateURL: nil, openInstaller: { _ in false }))
             defer {
                 model.shutDown()
             }
@@ -247,7 +364,7 @@ enum RenderUI {
     }
 
     @MainActor
-    private static func renderLoginStates(output: URL) async throws {
+    private static func renderLoginStates(output: URL, libraryRoot: URL) async throws {
         let response = try updateResponse(version: "0.4.0")
         for scenario in PreviewLoginScenario.allCases {
             let domain = "MyWallpaperUILoginPreview.\(UUID().uuidString)"
@@ -267,7 +384,12 @@ enum RenderUI {
             let updates = UpdateController(currentVersion: "0.4.0", defaults: defaults, transport: { _ in response })
             await updates.checkNow()
             let model = WallpaperModel(preferences: preferences, loginItems: loginItems,
-                                       powerMonitor: PreviewPowerMonitor(), updates: updates)
+                                       powerMonitor: PreviewPowerMonitor(), updates: updates,
+                                       wallpaperLibrary: WallpaperLibraryController(library: WallpaperLibrary(
+                                           rootURL: libraryRoot.appendingPathComponent("Wallpapers/Login-\(scenario.rawValue)"))),
+                                       screenSaverSync: ScreenSaverSyncController(
+                                           store: ScreenSaverSyncStore(rootURL: libraryRoot.appendingPathComponent("Sync/Login-\(scenario.rawValue)")),
+                                           templateURL: nil, openInstaller: { _ in false }))
             defer { model.shutDown() }
             if scenario == .registrationError { model.setLaunchAtLogin(true) }
             guard loginItems.canToggle == (scenario != .readOnly),
@@ -304,8 +426,14 @@ enum RenderUI {
         guard !model.hasWallpaper else { throw PreviewFailure(message: "UI preview unexpectedly enabled wallpaper.") }
         let navigation = AppNavigation()
         navigation.section = section
+        try await captureView(ControlView(model: model, navigation: navigation), scheme: scheme, size: size, to: destination)
+    }
+
+    @MainActor
+    private static func captureView<Content: View>(_ content: Content, scheme: ColorScheme,
+                                                 size: NSSize, to destination: URL) async throws {
         let bounds = NSRect(origin: .zero, size: size)
-        let root = ControlView(model: model, navigation: navigation)
+        let root = content
             .environment(\.colorScheme, scheme)
             .environment(\.controlActiveState, .active)
         let hosting = NSHostingView(rootView: root)

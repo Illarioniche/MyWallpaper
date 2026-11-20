@@ -31,6 +31,7 @@ enum ScreenSaverExporter {
     static func export(videoURL: URL, posterJPEG: Data, templateURL: URL, destinationURL: URL,
                        options: ScreenSaverExportOptions = .init(),
                        identity: ScreenSaverInstallationIdentity? = nil,
+                       syncRootURL: URL? = nil,
                        signer: Signer = signAndVerify) throws -> URL {
         let manager = FileManager.default
         var temporaryRoot: URL?
@@ -55,6 +56,18 @@ enum ScreenSaverExporter {
                 throw ScreenSaverExportError(ruKey: "Папка для экспорта заставки недоступна.")
             }
             try validateTemplate(templateURL)
+            var syncRootPath: String?
+            if let syncRootURL {
+                try validateLocalURL(syncRootURL)
+                guard try isDirectory(syncRootURL),
+                      let info = try PropertyListSerialization.propertyList(
+                        from: Data(contentsOf: templateURL.appendingPathComponent("Contents/Info.plist")),
+                        format: nil) as? [String: Any],
+                      info["MyWallpaperRuntimeVersion"] as? Int == 3 else { throw invalidTemplate() }
+                // The screen-saver host remaps home-directory APIs into its
+                // container. Embed the actual app-owned path in this signed installer.
+                syncRootPath = syncRootURL.resolvingSymlinksInPath().standardizedFileURL.path
+            }
             // Staging inside the template would recursively copy itself and
             // would modify a source that this operation promises to preserve.
             let templatePath = templateURL.resolvingSymlinksInPath().standardizedFileURL.pathComponents
@@ -88,7 +101,9 @@ enum ScreenSaverExporter {
                 if entryExists(oldURL) { try manager.removeItem(at: oldURL) }
             }
             let filename = "video.\(videoExtension)"
-            try manager.copyItem(at: videoURL, to: resources.appendingPathComponent(filename))
+            if syncRootURL == nil {
+                try manager.copyItem(at: videoURL, to: resources.appendingPathComponent(filename))
+            }
             try posterJPEG.write(to: resources.appendingPathComponent("poster.jpg"), options: .atomic)
             // The system picker uses these conventional resource names. Keep
             // the original poster for playback, and sign both previews with it.
@@ -99,7 +114,8 @@ enum ScreenSaverExporter {
             let configuration = Configuration(version: 1, videoFileName: filename,
                                               scaling: options.scaling, animateOnBattery: options.animateOnBattery,
                                               animateOnExternalPower: options.animateOnExternalPower,
-                                              pauseInLowPowerMode: options.pauseInLowPowerMode)
+                                              pauseInLowPowerMode: options.pauseInLowPowerMode,
+                                              syncRootPath: syncRootPath)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(configuration).write(to: resources.appendingPathComponent("configuration.json"), options: .atomic)
@@ -184,7 +200,8 @@ enum ScreenSaverExporter {
     private static func personalize(_ bundle: URL, identity: ScreenSaverInstallationIdentity) throws {
         let infoURL = bundle.appendingPathComponent("Contents/Info.plist")
         guard var info = try PropertyListSerialization.propertyList(from: Data(contentsOf: infoURL), format: nil) as? [String: Any],
-              info["MyWallpaperRuntimeVersion"] as? Int == 2 else { throw invalidTemplate() }
+              let version = info["MyWallpaperRuntimeVersion"] as? Int,
+              [2, 3].contains(version) else { throw invalidTemplate() }
         info["CFBundleIdentifier"] = identity.bundleIdentifier
         info["NSPrincipalClass"] = identity.principalClass
         info["CFBundleName"] = identity.name
@@ -247,5 +264,6 @@ enum ScreenSaverExporter {
         let animateOnBattery: Bool
         let animateOnExternalPower: Bool
         let pauseInLowPowerMode: Bool
+        let syncRootPath: String?
     }
 }

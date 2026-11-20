@@ -45,7 +45,11 @@ static void MWShowFailure(ScreenSaverView *view, BOOL invalidVideo) {
     posterLayer.contents = nil;
     BOOL russian = [NSLocale.preferredLanguages.firstObject.lowercaseString hasPrefix:@"ru"];
     NSString *message;
-    if (invalidVideo) {
+    if ([state[@"linkedMode"] boolValue]) {
+        message = russian
+            ? @"MyWallpaper\nОткройте приложение и включите синхронизацию заставки с обоями."
+            : @"MyWallpaper\nOpen the app and enable screen saver synchronization with your wallpaper.";
+    } else if (invalidVideo) {
         message = russian
             ? @"MyWallpaper\nНе удалось воспроизвести видео. Выберите другое видео и создайте заставку заново."
             : @"MyWallpaper\nThis video could not be played. Choose another video and create the screen saver again.";
@@ -86,58 +90,145 @@ static BOOL MWReadBoolean(NSDictionary *json, NSString *key, BOOL fallback, BOOL
     return [value boolValue];
 }
 
+static void MWLoadVideo(ScreenSaverView *view);
+
+// Linked installers embed a canonical absolute path. Never use home-directory
+// APIs here: legacyScreenSaver remaps those APIs into its sandbox container.
+static NSURL *MWLinkedRoot(id path) {
+    if (![path isKindOfClass:NSString.class] || ![path hasPrefix:@"/"]
+        || [path pathComponents].count < 2 || [[path pathComponents] containsObject:@".."]
+        || [[path pathComponents] containsObject:@"."]) return nil;
+    NSURL *root = [NSURL fileURLWithPath:path isDirectory:YES];
+    NSDictionary *values = [root resourceValuesForKeys:@[NSURLIsDirectoryKey, NSURLIsSymbolicLinkKey] error:nil];
+    if (![values[NSURLIsDirectoryKey] boolValue] || [values[NSURLIsSymbolicLinkKey] boolValue]
+        || ![root.URLByResolvingSymlinksInPath.path isEqualToString:root.path]) return nil;
+    return root;
+}
+
+static NSURL *MWLinkedFile(NSURL *root, NSString *component) {
+    NSURL *url = [root URLByAppendingPathComponent:component];
+    NSDictionary *values = [url resourceValuesForKeys:@[NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey] error:nil];
+    NSString *prefix = [root.path stringByAppendingString:@"/"];
+    if (![values[NSURLIsRegularFileKey] boolValue] || [values[NSURLIsSymbolicLinkKey] boolValue]
+        || ![url.URLByResolvingSymlinksInPath.path hasPrefix:prefix]) return nil;
+    return url;
+}
+
+static NSData *MWConfigurationData(NSURL *url) {
+    NSNumber *size = [url resourceValuesForKeys:@[NSURLFileSizeKey] error:nil][NSURLFileSizeKey];
+    if (!url || size.unsignedLongLongValue == 0 || size.unsignedLongLongValue > 65536) return nil;
+    NSData *data = [NSData dataWithContentsOfURL:url options:0 error:nil];
+    return data.length > 0 && data.length <= 65536 ? data : nil;
+}
+
+static NSDictionary *MWParsedConfiguration(NSDictionary *json, NSURL *linkedRoot) {
+    id version = json[@"version"];
+    if ((linkedRoot && !version) || (version && version != NSNull.null
+        && (![version isKindOfClass:NSNumber.class]
+            || CFGetTypeID((__bridge CFTypeRef)version) == CFBooleanGetTypeID()
+            || [version doubleValue] != 1))) return nil;
+    if (linkedRoot && (!version || version == NSNull.null)) return nil;
+    NSString *filename = json[@"videoFileName"];
+    id scaling = json[@"scaling"];
+    if (!linkedRoot && (!scaling || scaling == NSNull.null)) scaling = @"fill";
+    if (![filename isKindOfClass:NSString.class] || ![@[@"video.mp4", @"video.mov"] containsObject:filename]
+        || ![scaling isKindOfClass:NSString.class] || ![@[@"fill", @"fit"] containsObject:scaling]) return nil;
+    BOOL valid = YES;
+    if (linkedRoot) {
+        for (NSString *key in @[@"animateOnBattery", @"animateOnExternalPower", @"pauseInLowPowerMode"])
+            if (!json[key] || json[key] == NSNull.null) valid = NO;
+    }
+    BOOL battery = MWReadBoolean(json, @"animateOnBattery", NO, &valid);
+    BOOL external = MWReadBoolean(json, @"animateOnExternalPower", YES, &valid);
+    BOOL lowPower = MWReadBoolean(json, @"pauseInLowPowerMode", YES, &valid);
+    NSURL *videoURL;
+    NSURL *posterURL;
+    if (linkedRoot) {
+        NSString *revision = json[@"revision"];
+        NSUUID *uuid = [revision isKindOfClass:NSString.class] ? [[NSUUID alloc] initWithUUIDString:revision] : nil;
+        if (!uuid || ![uuid.UUIDString isEqualToString:revision]) return nil;
+        NSURL *directory = [linkedRoot URLByAppendingPathComponent:revision isDirectory:YES];
+        NSDictionary *values = [directory resourceValuesForKeys:@[NSURLIsDirectoryKey, NSURLIsSymbolicLinkKey] error:nil];
+        if (![values[NSURLIsDirectoryKey] boolValue] || [values[NSURLIsSymbolicLinkKey] boolValue]
+            || ![directory.URLByResolvingSymlinksInPath.path isEqualToString:directory.path]) return nil;
+        videoURL = MWLinkedFile(directory, filename);
+        posterURL = MWLinkedFile(directory, @"poster.jpg");
+    } else {
+        videoURL = MWResource(filename);
+        posterURL = MWResource(@"poster.jpg");
+    }
+    if (!valid || !videoURL || !posterURL) return nil;
+    NSNumber *posterSize = [posterURL resourceValuesForKeys:@[NSURLFileSizeKey] error:nil][NSURLFileSizeKey];
+    if (posterSize.unsignedLongLongValue == 0 || posterSize.unsignedLongLongValue > 32 * 1024 * 1024) return nil;
+    NSImage *image = [[NSImage alloc] initWithContentsOfURL:posterURL];
+    if (![image CGImageForProposedRect:NULL context:nil hints:nil]) return nil;
+    return @{@"configuration": @{@"animateOnBattery": @(battery), @"animateOnExternalPower": @(external),
+                                  @"pauseInLowPowerMode": @(lowPower)},
+             @"videoURL": videoURL, @"image": image, @"fit": @([scaling isEqualToString:@"fit"])};
+}
+
+static void MWApplyConfiguration(ScreenSaverView *view, NSDictionary *parsed) {
+    NSMutableDictionary *state = MWState(view);
+    state[@"configuration"] = parsed[@"configuration"];
+    state[@"videoURL"] = parsed[@"videoURL"];
+    state[@"failed"] = @NO;
+    CATextLayer *messageLayer = state[@"messageLayer"];
+    messageLayer.hidden = YES;
+    AVPlayerLayer *videoLayer = state[@"videoLayer"];
+    CALayer *posterLayer = state[@"posterLayer"];
+    BOOL fit = [parsed[@"fit"] boolValue];
+    videoLayer.videoGravity = fit ? AVLayerVideoGravityResizeAspect : AVLayerVideoGravityResizeAspectFill;
+    posterLayer.contentsGravity = fit ? kCAGravityResizeAspect : kCAGravityResizeAspectFill;
+    NSImage *image = parsed[@"image"];
+    posterLayer.contents = (__bridge id)[image CGImageForProposedRect:NULL context:nil hints:nil];
+    posterLayer.hidden = NO;
+    [state removeObjectForKey:@"appliedPlayback"];
+}
+
+static BOOL MWRefreshLinkedConfiguration(ScreenSaverView *view, BOOL allowLoad) {
+    NSMutableDictionary *state = MWState(view);
+    NSURL *root = MWLinkedRoot(state[@"linkedRootPath"]);
+    NSData *data = root ? MWConfigurationData(MWLinkedFile(root, @"current.json")) : nil;
+    if (!data) return NO;
+    if ([data isEqualToData:state[@"linkedConfigurationData"]]) return YES;
+    id decoded = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![decoded isKindOfClass:NSDictionary.class]) return NO;
+    NSDictionary *parsed = MWParsedConfiguration(decoded, root);
+    if (!parsed) return NO;
+    BOOL reloadVideo = ![parsed[@"videoURL"] isEqual:state[@"videoURL"]]
+        || (!state[@"player"] && !state[@"asset"]);
+    if (allowLoad && reloadVideo) {
+        state[@"generation"] = @([state[@"generation"] unsignedLongLongValue] + 1);
+        MWReleasePlayback(state);
+    }
+    MWApplyConfiguration(view, parsed);
+    state[@"linkedConfigurationData"] = data;
+    if (allowLoad && reloadVideo && [state[@"active"] boolValue]) MWLoadVideo(view);
+    return YES;
+}
+
 static void MWReadConfiguration(ScreenSaverView *view) {
     NSMutableDictionary *state = MWState(view);
     state[@"failed"] = @NO;
-    [state removeObjectsForKeys:@[@"configuration", @"videoURL"]];
+    [state removeObjectsForKeys:@[@"configuration", @"videoURL", @"linkedRootPath", @"linkedConfigurationData", @"linkedMode"]];
     CATextLayer *messageLayer = state[@"messageLayer"];
     messageLayer.hidden = YES;
     CALayer *posterLayer = state[@"posterLayer"];
     posterLayer.contents = nil;
     posterLayer.hidden = NO;
-
-    NSURL *configURL = MWResource(@"configuration.json");
-    NSNumber *size = [configURL resourceValuesForKeys:@[NSURLFileSizeKey] error:nil][NSURLFileSizeKey];
-    if (!configURL || size.unsignedLongLongValue == 0 || size.unsignedLongLongValue > 65536) {
-        MWShowFailure(view, NO);
-        return;
-    }
-    NSData *data = [NSData dataWithContentsOfURL:configURL options:0 error:nil];
+    NSData *data = MWConfigurationData(MWResource(@"configuration.json"));
     id decoded = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     if (![decoded isKindOfClass:NSDictionary.class]) { MWShowFailure(view, NO); return; }
     NSDictionary *json = decoded;
-    id version = json[@"version"];
-    if (version && version != NSNull.null && (![version isKindOfClass:NSNumber.class]
-        || CFGetTypeID((__bridge CFTypeRef)version) == CFBooleanGetTypeID() || [version doubleValue] != 1)) {
-        MWShowFailure(view, NO);
-        return;
+    id syncRootPath = json[@"syncRootPath"];
+    if (syncRootPath && syncRootPath != NSNull.null) {
+        state[@"linkedMode"] = @YES;
+        if ([syncRootPath isKindOfClass:NSString.class]) state[@"linkedRootPath"] = syncRootPath;
+        if (!MWRefreshLinkedConfiguration(view, NO)) MWShowFailure(view, NO);
+    } else {
+        NSDictionary *parsed = MWParsedConfiguration(json, nil);
+        if (parsed) MWApplyConfiguration(view, parsed); else MWShowFailure(view, NO);
     }
-    NSString *filename = json[@"videoFileName"];
-    id scaling = json[@"scaling"];
-    if (!scaling || scaling == NSNull.null) scaling = @"fill";
-    if (![filename isKindOfClass:NSString.class] || ![@[@"video.mp4", @"video.mov"] containsObject:filename]
-        || ![scaling isKindOfClass:NSString.class] || ![@[@"fill", @"fit"] containsObject:scaling]) {
-        MWShowFailure(view, NO);
-        return;
-    }
-    BOOL valid = YES;
-    BOOL battery = MWReadBoolean(json, @"animateOnBattery", NO, &valid);
-    BOOL external = MWReadBoolean(json, @"animateOnExternalPower", YES, &valid);
-    BOOL lowPower = MWReadBoolean(json, @"pauseInLowPowerMode", YES, &valid);
-    NSURL *videoURL = MWResource(filename);
-    NSURL *posterURL = MWResource(@"poster.jpg");
-    if (!valid || !videoURL || !posterURL) { MWShowFailure(view, NO); return; }
-    NSImage *image = [[NSImage alloc] initWithContentsOfURL:posterURL];
-    CGImageRef poster = [image CGImageForProposedRect:NULL context:nil hints:nil];
-    if (!poster) { MWShowFailure(view, NO); return; }
-    state[@"configuration"] = @{@"animateOnBattery": @(battery), @"animateOnExternalPower": @(external),
-                                @"pauseInLowPowerMode": @(lowPower)};
-    state[@"videoURL"] = videoURL;
-    AVPlayerLayer *videoLayer = state[@"videoLayer"];
-    BOOL fit = [scaling isEqualToString:@"fit"];
-    videoLayer.videoGravity = fit ? AVLayerVideoGravityResizeAspect : AVLayerVideoGravityResizeAspectFill;
-    posterLayer.contentsGravity = fit ? kCAGravityResizeAspect : kCAGravityResizeAspectFill;
-    posterLayer.contents = (__bridge id)poster;
 }
 
 static void MWUpdatePlayback(ScreenSaverView *view) {
@@ -298,6 +389,13 @@ static void MWStop(ScreenSaverView *view, SEL selector) {
 static void MWAnimate(ScreenSaverView *view, SEL selector) {
     (void)selector;
     // ScreenSaver may deliver a late timer event after stopAnimation.
+    NSMutableDictionary *state = MWState(view);
+    if (![state[@"active"] boolValue]) return;
+    if ([state[@"linkedMode"] boolValue]) {
+        // Keep the last valid frame/video during an incomplete or inaccessible
+        // update. Initial failures remain visible and retry after the app publishes.
+        MWRefreshLinkedConfiguration(view, YES);
+    }
     MWUpdatePlayback(view);
 }
 

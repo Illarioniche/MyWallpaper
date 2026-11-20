@@ -59,18 +59,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.screenSaver.isWorking else { return .terminateNow }
+        guard model.screenSaver.isWorking || model.isWorkingWithWallpapers || model.wallpaperLibrary.isWorking
+                || model.screenSaverSync.isWorking else { return .terminateNow }
         // Finish pending library operations before quitting, including cleanup
         // of staging folders when a large video is still being copied.
-        navigation.section = .screenSaver
+        navigation.section = model.screenSaver.isWorking || model.screenSaverSync.isWorking ? .screenSaver : .wallpaper
         showWindow()
         if terminationTask == nil {
             terminationTask = Task { [weak self] in
                 guard let self else { return }
-                for await busy in self.model.screenSaver.$isWorking.values {
+                let work = self.model.screenSaver.$isWorking
+                    .combineLatest(self.model.$isWorkingWithWallpapers, self.model.wallpaperLibrary.$isWorking,
+                                   self.model.screenSaverSync.$isWorking)
+                    .map { $0 || $1 || $2 || $3 }
+                    .removeDuplicates()
+                for await busy in work.values {
                     if !busy {
                         self.terminationTask = nil
-                        sender.reply(toApplicationShouldTerminate: self.model.screenSaver.failure == nil)
+                        sender.reply(toApplicationShouldTerminate: self.model.screenSaver.failure == nil
+                            && self.model.wallpaperLibrary.failure == nil && self.model.screenSaverSync.failure == nil)
                         break
                     }
                 }
@@ -88,12 +95,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let url = urls.first else { return }
         openedFile = true
         navigation.section = .wallpaper
-        model.selectVideo(url)
+        model.importWallpaper(url)
         showWindow()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         if statusItem != nil { checkForUpdatesAutomatically() }
+        Task { await model.screenSaverSync.refreshInstallation() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -61,7 +61,7 @@ struct ControlView: View {
                 model.screenSaver.selectVideo(url)
             } else {
                 navigation.section = .wallpaper
-                model.selectVideo(url)
+                model.importWallpaper(url)
             }
             return true
         } isTargeted: { dropTargeted = $0 }
@@ -157,13 +157,6 @@ struct ControlView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 10)
-            if navigation.section == .wallpaper {
-                Button(action: model.chooseVideo) {
-                    Label(model.localizer.text("Выбрать видео"), systemImage: "plus")
-                }
-                .controlSize(.large)
-                .keyboardShortcut("o", modifiers: .command)
-            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 22)
@@ -197,6 +190,15 @@ private struct WallpaperSettingsPane: View {
     @ObservedObject var model: WallpaperModel
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            WallpaperLibraryPane(model: model)
+            if model.selectedURL != nil || model.isLoading {
+                currentSettings
+            }
+        }
+    }
+
+    private var currentSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsCard {
                 preview
@@ -217,7 +219,7 @@ private struct WallpaperSettingsPane: View {
                     HStack(spacing: 12) {
                         RowIcon(symbol: "film", color: .teal)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(model.selectedURL?.lastPathComponent ?? model.localizer.text("Видео"))
+                            Text(model.selectedWallpaperName ?? model.selectedURL?.lastPathComponent ?? model.localizer.text("Видео"))
                                 .font(.system(size: 12, weight: .medium))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -232,17 +234,19 @@ private struct WallpaperSettingsPane: View {
                             .foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 4)
-                        Button(action: model.revealVideo) {
-                            Image(systemName: "folder").frame(width: 28, height: 28)
+                        if model.activeWallpaperID == nil {
+                            Button(action: model.revealVideo) {
+                                Image(systemName: "folder").frame(width: 28, height: 28)
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .help(model.localizer.text("Показать видео в Finder"))
+                            .accessibilityLabel(model.localizer.text("Показать видео в Finder"))
                         }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help(model.localizer.text("Показать видео в Finder"))
-                        .accessibilityLabel(model.localizer.text("Показать видео в Finder"))
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .help(model.selectedURL?.path ?? "")
+                    .help(model.selectedWallpaperName ?? model.selectedURL?.path ?? "")
                 }
 
                 if model.selectedURL != nil || model.isLoading {

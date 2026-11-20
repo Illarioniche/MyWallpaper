@@ -1,12 +1,12 @@
 import Foundation
 
-enum DisplayTarget: String, CaseIterable, Identifiable {
+enum DisplayTarget: String, CaseIterable, Identifiable, Codable, Sendable {
     case all, main
     var id: String { rawValue }
     var title: String { self == .all ? "Все экраны" : "Основной экран" }
 }
 
-enum VideoScaling: String, CaseIterable, Identifiable {
+enum VideoScaling: String, CaseIterable, Identifiable, Codable, Sendable {
     case fill, fit
     var id: String { rawValue }
     var title: String { self == .fill ? "Заполнить" : "Вместить" }
@@ -70,6 +70,11 @@ struct WallpaperPreferences {
         nonmutating set { defaults.set(newValue, forKey: "syncSystemWallpaper") }
     }
 
+    var syncScreenSaver: Bool {
+        get { defaults.object(forKey: "syncScreenSaver") as? Bool ?? false }
+        nonmutating set { defaults.set(newValue, forKey: "syncScreenSaver") }
+    }
+
     var isMuted: Bool {
         get { defaults.object(forKey: "isMuted") as? Bool ?? true }
         nonmutating set { defaults.set(newValue, forKey: "isMuted") }
@@ -123,5 +128,10 @@ struct WallpaperPreferences {
     var videoBookmark: Data? {
         get { defaults.data(forKey: "videoBookmark") }
         nonmutating set { defaults.set(newValue, forKey: "videoBookmark") }
+    }
+
+    var activeWallpaperID: UUID? {
+        get { defaults.string(forKey: "activeWallpaperID").flatMap(UUID.init(uuidString:)) }
+        nonmutating set { defaults.set(newValue?.uuidString, forKey: "activeWallpaperID") }
     }
 }

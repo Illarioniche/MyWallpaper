@@ -9,6 +9,8 @@ final class WallpaperModel: ObservableObject {
     let loginItems: LoginItemController
     let updates: UpdateController
     let screenSaver: ScreenSaverController
+    let wallpaperLibrary: WallpaperLibraryController
+    let screenSaverSync: ScreenSaverSyncController
     private let powerMonitor: any PowerSourceMonitoring
     private let preferences: WallpaperPreferences
     private let systemWallpaperSync: any SystemWallpaperSyncing
@@ -23,6 +25,13 @@ final class WallpaperModel: ObservableObject {
     private var forwardedLoginError: String?
     private var renderError: ((AppLocalizer) -> String)?
     private var isChangingLanguage = false
+    private var isApplyingWallpaperOptions = false
+    private var libraryTask: Task<Void, Never>?
+    private var libraryActionID = UUID()
+    private var libraryActionCount = 0
+
+    @Published private(set) var activeWallpaperID: UUID?
+    @Published private(set) var isWorkingWithWallpapers = false
 
     @Published private(set) var selectedURL: URL?
     @Published private(set) var thumbnail: NSImage?
@@ -59,13 +68,22 @@ final class WallpaperModel: ObservableObject {
         didSet {
             preferences.scaling = scaling
             configureEngine()
-            if oldValue != scaling { synchronizeSystemWallpaper() }
+            if oldValue != scaling {
+                synchronizeSystemWallpaper()
+                synchronizeScreenSaver()
+            }
         }
     }
     @Published var syncSystemWallpaper: Bool {
         didSet {
             preferences.syncSystemWallpaper = syncSystemWallpaper
             synchronizeSystemWallpaper()
+        }
+    }
+    @Published var syncScreenSaver: Bool {
+        didSet {
+            preferences.syncScreenSaver = syncScreenSaver
+            synchronizeScreenSaver()
         }
     }
     @Published var isMuted: Bool {
@@ -87,6 +105,7 @@ final class WallpaperModel: ObservableObject {
             preferences.pauseInLowPowerMode = pauseInLowPowerMode
             policy.pauseInLowPowerMode = pauseInLowPowerMode
             updatePlayback()
+            if oldValue != pauseInLowPowerMode { synchronizeScreenSaver() }
         }
     }
     @Published var restoreOnLaunch: Bool {
@@ -100,6 +119,7 @@ final class WallpaperModel: ObservableObject {
             preferences.animateOnExternalPower = animateOnExternalPower
             policy.animateOnExternalPower = animateOnExternalPower
             updatePlayback()
+            if oldValue != animateOnExternalPower { synchronizeScreenSaver() }
         }
     }
     @Published var animateOnBattery: Bool {
@@ -107,6 +127,7 @@ final class WallpaperModel: ObservableObject {
             preferences.animateOnBattery = animateOnBattery
             policy.animateOnBattery = animateOnBattery
             updatePlayback()
+            if oldValue != animateOnBattery { synchronizeScreenSaver() }
         }
     }
 
@@ -136,12 +157,17 @@ final class WallpaperModel: ObservableObject {
          powerMonitor: (any PowerSourceMonitoring)? = nil,
          updates: UpdateController? = nil,
          screenSaver: ScreenSaverController? = nil,
-         systemWallpaperSync: (any SystemWallpaperSyncing)? = nil) {
+         systemWallpaperSync: (any SystemWallpaperSyncing)? = nil,
+         wallpaperLibrary: WallpaperLibraryController? = nil,
+         screenSaverSync: ScreenSaverSyncController? = nil) {
         self.preferences = preferences
         self.systemWallpaperSync = systemWallpaperSync ?? SystemWallpaperSync()
         self.loginItems = loginItems ?? LoginItemController()
         self.updates = updates ?? UpdateController()
         self.screenSaver = screenSaver ?? ScreenSaverController()
+        self.wallpaperLibrary = wallpaperLibrary ?? WallpaperLibraryController()
+        self.screenSaverSync = screenSaverSync ?? ScreenSaverSyncController()
+        activeWallpaperID = preferences.activeWallpaperID
         language = preferences.language
         let monitor = powerMonitor ?? PowerSourceMonitor()
         self.powerMonitor = monitor
@@ -149,6 +175,7 @@ final class WallpaperModel: ObservableObject {
         target = preferences.target
         scaling = preferences.scaling
         syncSystemWallpaper = preferences.syncSystemWallpaper
+        syncScreenSaver = preferences.syncScreenSaver
         isMuted = preferences.isMuted
         volume = preferences.volume
         pauseInLowPowerMode = preferences.pauseInLowPowerMode
@@ -173,6 +200,9 @@ final class WallpaperModel: ObservableObject {
         engine.$isPausedForOcclusion.assign(to: &$isPausedForOcclusion)
         engine.$occludedDisplayCount.assign(to: &$occludedDisplayCount)
         engine.$displayCount.assign(to: &$displayCount)
+        self.wallpaperLibrary.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
         monitor.sourcePublisher
             .removeDuplicates()
             .sink { [weak self] source in
@@ -211,6 +241,38 @@ final class WallpaperModel: ObservableObject {
     }
 
     func restore() {
+        guard let id = preferences.activeWallpaperID else {
+            restoreExternalVideo()
+            return
+        }
+        libraryTask?.cancel()
+        let actionID = UUID()
+        libraryActionID = actionID
+        libraryTask = Task { [weak self] in
+            guard let self else { return }
+            self.beginLibraryAction()
+            defer { self.endLibraryAction() }
+            await self.wallpaperLibrary.reload()
+            guard !Task.isCancelled, self.libraryActionID == actionID else { return }
+            guard let entry = self.wallpaperLibrary.entries.first(where: { $0.id == id }) else {
+                // Never fall back to an unrelated bookmark when a managed record is missing.
+                self.reportError("Сохранённые обои недоступны. Выбери другую запись или добавь видео заново.")
+                return
+            }
+            do {
+                let url = try self.wallpaperLibrary.videoURL(for: entry)
+                if self.preferences.restoreOnLaunch && self.preferences.wallpaperEnabled {
+                    self.selectVideo(url, preservePause: true, libraryEntry: entry, applySavedOptions: false)
+                } else {
+                    self.selectedURL = url
+                    self.thumbnail = self.wallpaperLibrary.thumbnails[id]
+                    self.synchronizeScreenSaver()
+                }
+            } catch { self.reportLibraryError(error) }
+        }
+    }
+
+    private func restoreExternalVideo() {
         guard let bookmark = preferences.videoBookmark else { return }
         do {
             var stale = false
@@ -234,6 +296,7 @@ final class WallpaperModel: ObservableObject {
                 selectVideo(url, preservePause: true)
             } else {
                 selectedURL = url
+                synchronizeScreenSaver()
                 if acquiredScope { scopedURL = url; retainedScope = true }
                 loadingTask = Task { [weak self] in
                     let image = await Self.makeThumbnail(url)
@@ -247,9 +310,14 @@ final class WallpaperModel: ObservableObject {
     }
 
     func chooseVideo() {
+        addWallpaperVideo()
+    }
+
+    func addWallpaperVideo() {
+        guard !isWorkingWithWallpapers else { return }
         let panel = NSOpenPanel()
         panel.title = localizer.text("Выбери живые обои")
-        panel.prompt = localizer.text("Установить обои")
+        panel.prompt = localizer.text("Добавить видео")
         panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie, .movie]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -257,17 +325,20 @@ final class WallpaperModel: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in self?.selectVideo(url) }
+            Task { @MainActor in self?.importWallpaper(url) }
         }
     }
 
-    func selectVideo(_ url: URL, preservePause: Bool = false) {
+    func selectVideo(_ url: URL, preservePause: Bool = false,
+                     libraryEntry: WallpaperLibraryEntry? = nil, applySavedOptions: Bool = true) {
         guard url.isFileURL else {
             reportError("Выбери видео, сохранённое на этом Mac.")
             return
         }
+        libraryActionID = UUID()
         loadingTask?.cancel()
         cancelSystemWallpaperSync()
+        screenSaverSync.cancelSynchronization()
         let requestID = UUID()
         loadID = requestID
         isLoading = true
@@ -286,15 +357,24 @@ final class WallpaperModel: ObservableObject {
                 // without requiring the security-scoped bookmark service.
                 let bookmark = try url.bookmarkData(options: [],
                                                     includingResourceValuesForKeys: nil, relativeTo: nil)
-                try await self.engine.load(url: url)
+                try await self.engine.load(url: url, beforeCommit: { [weak self] in
+                    // A newly selected entry must not briefly play with the old entry's audio settings.
+                    self?.engine.setPlaybackEnabled(false)
+                })
                 try Task.checkCancellation()
                 guard self.loadID == requestID else { return }
                 self.releaseScope()
                 if acquiredScope { self.scopedURL = url; retainedScope = true }
                 self.selectedURL = url
+                self.activeWallpaperID = libraryEntry?.id
+                self.preferences.activeWallpaperID = libraryEntry?.id
                 self.thumbnail = self.engine.posterImage.map { NSImage(cgImage: $0, size: .zero) }
                 self.preferences.videoBookmark = bookmark
                 self.preferences.wallpaperEnabled = true
+                if let libraryEntry, applySavedOptions {
+                    let latest = self.wallpaperLibrary.entries.first { $0.id == libraryEntry.id } ?? libraryEntry
+                    self.applyOptions(latest.options)
+                }
                 if !preservePause {
                     self.userPaused = false
                     self.policy.userPaused = false
@@ -303,11 +383,14 @@ final class WallpaperModel: ObservableObject {
                 self.updatePlayback()
                 self.isLoading = false
                 self.synchronizeSystemWallpaper()
+                self.synchronizeScreenSaver()
             } catch is CancellationError {
                 // A later selection or Stop owns the state now.
             } catch {
                 guard self.loadID == requestID else { return }
                 self.reportError("Не удалось открыть видео. %@", detail: error.localizedDescription)
+                self.isLoading = false
+                self.synchronizeScreenSaver()
             }
         }
     }
@@ -316,7 +399,8 @@ final class WallpaperModel: ObservableObject {
         if !hasWallpaper {
             if let selectedURL {
                 enableAnimationForCurrentPowerSource()
-                selectVideo(selectedURL)
+                let entry = activeWallpaperID.flatMap { id in wallpaperLibrary.entries.first { $0.id == id } }
+                selectVideo(selectedURL, libraryEntry: entry, applySavedOptions: false)
             } else { chooseVideo() }
             return
         }
@@ -339,6 +423,8 @@ final class WallpaperModel: ObservableObject {
     }
 
     func stop() {
+        let wasLoading = isLoading
+        libraryActionID = UUID()
         loadingTask?.cancel()
         cancelSystemWallpaperSync()
         loadID = UUID()
@@ -346,9 +432,12 @@ final class WallpaperModel: ObservableObject {
         engine.stop()
         preferences.wallpaperEnabled = false
         releaseScope()
+        if wasLoading { synchronizeScreenSaver() }
     }
 
     func shutDown() {
+        screenSaverSync.cancelSynchronization()
+        libraryTask?.cancel()
         loadingTask?.cancel()
         cancelSystemWallpaperSync()
         engine.stop()
@@ -357,6 +446,144 @@ final class WallpaperModel: ObservableObject {
 
     func revealVideo() {
         if let selectedURL { NSWorkspace.shared.activateFileViewerSelecting([selectedURL]) }
+    }
+
+    var selectedWallpaperName: String? {
+        activeWallpaperID.flatMap { id in wallpaperLibrary.entries.first { $0.id == id }?.name }
+    }
+
+    var currentWallpaperOptions: WallpaperLibraryOptions {
+        WallpaperLibraryOptions(target: target, scaling: scaling, isMuted: isMuted, volume: volume,
+            animateOnExternalPower: animateOnExternalPower, animateOnBattery: animateOnBattery,
+            pauseInLowPowerMode: pauseInLowPowerMode, pauseWhenCovered: pauseWhenCovered,
+            syncSystemWallpaper: syncSystemWallpaper)
+    }
+
+    func importWallpaper(_ url: URL) {
+        guard !isWorkingWithWallpapers, !isLoading else { return }
+        libraryTask?.cancel()
+        let actionID = UUID()
+        libraryActionID = actionID
+        let options = currentWallpaperOptions
+        beginLibraryAction()
+        libraryTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.endLibraryAction() }
+            if let entry = await self.wallpaperLibrary.addVideo(url, options: options),
+               !Task.isCancelled, self.libraryActionID == actionID {
+                self.applyWallpaper(entry)
+            }
+        }
+    }
+
+    func saveCurrentWallpaperToLibrary() async {
+        guard !isWorkingWithWallpapers, !isLoading, activeWallpaperID == nil, let source = selectedURL else { return }
+        let generation = loadID
+        let actionID = libraryActionID
+        beginLibraryAction()
+        defer { endLibraryAction() }
+        guard let entry = await wallpaperLibrary.addVideo(source, options: currentWallpaperOptions),
+              !Task.isCancelled, loadID == generation, libraryActionID == actionID, selectedURL == source else { return }
+        do {
+            let url = try wallpaperLibrary.videoURL(for: entry)
+            if hasWallpaper {
+                selectVideo(url, preservePause: true, libraryEntry: entry, applySavedOptions: false)
+            } else {
+                let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+                releaseScope()
+                selectedURL = url
+                activeWallpaperID = entry.id
+                preferences.activeWallpaperID = entry.id
+                preferences.videoBookmark = bookmark
+                thumbnail = wallpaperLibrary.thumbnails[entry.id]
+                synchronizeScreenSaver()
+            }
+        } catch { reportLibraryError(error) }
+    }
+
+    func applyWallpaper(_ entry: WallpaperLibraryEntry) {
+        do {
+            let url = try wallpaperLibrary.videoURL(for: entry)
+            selectVideo(url, libraryEntry: entry)
+        } catch { reportLibraryError(error) }
+    }
+
+    @discardableResult
+    func renameWallpaper(_ entry: WallpaperLibraryEntry, name: String) async -> Bool {
+        beginLibraryAction()
+        defer { endLibraryAction() }
+        guard await wallpaperLibrary.rename(entry, name: name) != nil else { return false }
+        if activeWallpaperID == entry.id { synchronizeScreenSaver() }
+        return true
+    }
+
+    @discardableResult
+    func updateWallpaper(_ entry: WallpaperLibraryEntry, options: WallpaperLibraryOptions) async -> Bool {
+        beginLibraryAction()
+        defer { endLibraryAction() }
+        guard let updated = await wallpaperLibrary.updateOptions(entry, options: options) else { return false }
+        if activeWallpaperID == entry.id {
+            applyOptions(updated.options)
+            synchronizeSystemWallpaper()
+            synchronizeScreenSaver()
+        }
+        return true
+    }
+
+    @discardableResult
+    func deleteWallpaper(_ entry: WallpaperLibraryEntry) async -> Bool {
+        guard !isLoading else { return false }
+        beginLibraryAction()
+        defer { endLibraryAction() }
+        guard await wallpaperLibrary.delete(entry) else { return false }
+        if activeWallpaperID == entry.id {
+            screenSaverSync.cancelSynchronization()
+            screenSaverSync.dismissFailure()
+            stop()
+            activeWallpaperID = nil
+            preferences.activeWallpaperID = nil
+            preferences.videoBookmark = nil
+            selectedURL = nil
+            thumbnail = nil
+        }
+        return true
+    }
+
+    private func applyOptions(_ options: WallpaperLibraryOptions) {
+        isApplyingWallpaperOptions = true
+        target = options.target
+        scaling = options.scaling
+        isMuted = options.isMuted
+        volume = options.volume
+        animateOnExternalPower = options.animateOnExternalPower
+        animateOnBattery = options.animateOnBattery
+        pauseInLowPowerMode = options.pauseInLowPowerMode
+        pauseWhenCovered = options.pauseWhenCovered
+        syncSystemWallpaper = options.syncSystemWallpaper
+        isApplyingWallpaperOptions = false
+        configureEngine()
+        updatePlayback()
+    }
+
+    private func beginLibraryAction() {
+        libraryActionCount += 1
+        isWorkingWithWallpapers = true
+    }
+
+    private func endLibraryAction() {
+        libraryActionCount -= 1
+        isWorkingWithWallpapers = libraryActionCount > 0
+    }
+
+    private func reportLibraryError(_ error: Error) {
+        if let failure = error as? WallpaperLibraryError {
+            renderError = { localizer in
+                localizer.text(failure.ruKey) + (failure.detail.map { "\n\n" + $0 } ?? "")
+            }
+            errorMessage = renderError?(localizer)
+        } else {
+            reportError("Не удалось открыть видео. %@", detail: error.localizedDescription)
+        }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -372,8 +599,24 @@ final class WallpaperModel: ObservableObject {
     }
 
     private func configureEngine() {
+        guard !isApplyingWallpaperOptions else { return }
         engine.configure(target: target, scaling: scaling, isMuted: isMuted,
                          pauseWhenCovered: pauseWhenCovered, volume: Float(volume))
+    }
+
+    func synchronizeScreenSaver() {
+        guard !isApplyingWallpaperOptions else { return }
+        guard syncScreenSaver else {
+            screenSaverSync.cancelSynchronization()
+            screenSaverSync.dismissFailure()
+            return
+        }
+        guard !isLoading, let selectedURL else { return }
+        let name = selectedWallpaperName ?? selectedURL.deletingPathExtension().lastPathComponent
+        screenSaverSync.synchronize(videoURL: selectedURL, name: String(name.prefix(80)),
+            options: ScreenSaverExportOptions(scaling: scaling == .fill ? .fill : .fit,
+                animateOnBattery: animateOnBattery, animateOnExternalPower: animateOnExternalPower,
+                pauseInLowPowerMode: pauseInLowPowerMode))
     }
 
     private var selectedSystemScreenIDs: [UInt32] {
@@ -389,6 +632,7 @@ final class WallpaperModel: ObservableObject {
     }
 
     private func synchronizeSystemWallpaper() {
+        guard !isApplyingWallpaperOptions else { return }
         cancelSystemWallpaperSync()
         guard syncSystemWallpaper, !isLoading, engine.hasWallpaper,
               let image = engine.posterImage, let selectedURL else {
@@ -398,7 +642,7 @@ final class WallpaperModel: ObservableObject {
         synchronizedScreenIDs = selectedSystemScreenIDs
         let requestID = systemWallpaperRequestID
         let service = systemWallpaperSync
-        let name = selectedURL.deletingPathExtension().lastPathComponent
+        let name = selectedWallpaperName ?? selectedURL.deletingPathExtension().lastPathComponent
         let target = self.target
         let scaling = self.scaling
         isSyncingSystemWallpaper = true
@@ -430,6 +674,7 @@ final class WallpaperModel: ObservableObject {
     }
 
     private func updatePlayback() {
+        guard !isApplyingWallpaperOptions else { return }
         pauseReason = policy.pauseReason.map { localizer.text($0) }
         engine.setPlaybackEnabled(policy.shouldPlay)
     }
