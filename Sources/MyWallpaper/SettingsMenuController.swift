@@ -7,6 +7,7 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
     var onError: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenUpdates: (() -> Void)?
+    var onOpenScreenSaver: (() -> Void)?
 
     init(model: WallpaperModel) { self.model = model }
 
@@ -22,6 +23,7 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
         model.loginItems.refresh()
         menu.removeAllItems()
         add(model.localizer.text("Открыть настройки…"), action: #selector(openSettings), to: menu)
+        add(model.localizer.text("Мои заставки…"), action: #selector(openScreenSaver), to: menu)
         let updateTitle = model.updates.availableRelease.map { model.localizer.format("Доступна версия %@…", $0.version) }
             ?? (model.updates.isChecking ? model.localizer.text("Проверяем обновления…") : model.localizer.text("Проверить обновления…"))
         let update = add(updateTitle, action: #selector(checkUpdates), to: menu)
@@ -93,6 +95,7 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openLoginSettings() { model.loginItems.openSystemSettings() }
     @objc private func openSettings() { onOpenSettings?() }
+    @objc private func openScreenSaver() { onOpenScreenSaver?() }
     @objc private func checkUpdates() {
         onOpenUpdates?()
         if model.updates.availableRelease == nil {

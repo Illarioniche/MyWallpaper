@@ -65,6 +65,11 @@ struct WallpaperPreferences {
         nonmutating set { defaults.set(newValue.rawValue, forKey: "videoScaling") }
     }
 
+    var syncSystemWallpaper: Bool {
+        get { defaults.object(forKey: "syncSystemWallpaper") as? Bool ?? false }
+        nonmutating set { defaults.set(newValue, forKey: "syncSystemWallpaper") }
+    }
+
     var isMuted: Bool {
         get { defaults.object(forKey: "isMuted") as? Bool ?? true }
         nonmutating set { defaults.set(newValue, forKey: "isMuted") }
