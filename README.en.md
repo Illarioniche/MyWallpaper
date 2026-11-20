@@ -165,8 +165,8 @@ This command builds a universal app and creates a compressed disk image for drag
 ```text
 dist/
 ├── MyWallpaper.app
-├── MyWallpaper-0.6.1-universal.dmg
-└── MyWallpaper-0.6.1-universal.dmg.sha256
+├── MyWallpaper-0.7.0-universal.dmg
+└── MyWallpaper-0.7.0-universal.dmg.sha256
 ```
 
 The image contains the app, a link to Applications, and brief installation instructions. The version comes from `Info.plist`; the architecture comes from the built executable. To package an existing build without recompiling:
@@ -180,7 +180,7 @@ The filename reflects the actual architectures: `universal`, `arm64`, or `x86_64
 To verify a downloaded image, run this from the directory containing both files:
 
 ```sh
-shasum -a 256 -c MyWallpaper-0.6.1-universal.dmg.sha256
+shasum -a 256 -c MyWallpaper-0.7.0-universal.dmg.sha256
 ```
 
 The universal build includes Intel, but launch validation has been performed on Apple Silicon. Distribution with a verified developer identity separately requires Developer ID signing and Apple notarization.
