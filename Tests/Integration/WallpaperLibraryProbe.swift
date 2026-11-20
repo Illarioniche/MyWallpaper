@@ -58,12 +58,15 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
         }
         let model = makeModel(library)
         defer { model.shutDown() }
+        model.pauseWhenCovered = false
+        model.pauseInLowPowerMode = false
+        let globalRules = model.globalPowerRules
         let aOptions = WallpaperLibraryOptions(target: .all, scaling: .fill, isMuted: true, volume: 0.25,
             animateOnExternalPower: true, animateOnBattery: false, pauseInLowPowerMode: false,
             pauseWhenCovered: false, syncSystemWallpaper: true)
         let bOptions = WallpaperLibraryOptions(target: .main, scaling: .fit, isMuted: true, volume: 0.5,
-            animateOnExternalPower: false, animateOnBattery: true, pauseInLowPowerMode: true,
-            pauseWhenCovered: false, syncSystemWallpaper: false)
+            animateOnExternalPower: false, animateOnBattery: true, pauseInLowPowerMode: false,
+            pauseWhenCovered: false, syncSystemWallpaper: false, usesGlobalPowerRules: false)
         guard let a = await library.addVideo(video, options: aOptions),
               let b = await library.addVideo(video, options: bOptions) else {
             throw ProbeFailure(message: "Real media import failed: \(library.failure?.ruKey ?? "unknown")")
@@ -79,13 +82,40 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
         try require(model.currentWallpaperOptions == aOptions, "A settings were not applied.")
         try require(desktopWindows.count == NSScreen.screens.count, "A should use every display.")
         try require(desktopWindows.allSatisfy { player($0)?.isMuted == true }, "Imported wallpaper unexpectedly enabled audio.")
+        model.animateOnExternalPower = false
+        try await wait("global rules pause inherited wallpaper") { !model.isPlaying }
+        model.animateOnExternalPower = true
+        try await wait("global rules resume inherited wallpaper") { model.isPlaying }
         print("PASS: imported two real videos, selected managed A with saved settings and safe system-sync spy")
 
         model.applyWallpaper(b)
         try await wait("B still mode") { !model.isLoading && model.activeWallpaperID == b.id && model.hasWallpaper && !model.isPlaying }
         try require(model.currentWallpaperOptions == bOptions, "B settings were not restored.")
+        try require(model.globalPowerRules == globalRules && preferences.globalPowerRules == globalRules,
+                    "Selecting an exception overwrote common power rules.")
         try require(model.selectedURL == bURL && desktopWindows.count == 1, "B should use its own copy on the main display.")
         try require(desktopWindows.first.flatMap(layer)?.videoGravity == .resizeAspect, "B Fit scaling did not reach AVPlayerLayer.")
+        model.togglePlayback()
+        try await wait("temporary animation of B") { model.isPlaying }
+        try require(model.globalPowerRules == globalRules && model.currentWallpaperOptions == bOptions,
+                    "Animate Now changed persistent common rules or the saved exception.")
+        model.togglePlayback()
+        try await wait("manual pause during temporary animation") { model.userPaused && !model.isPlaying }
+        model.togglePlayback()
+        try await wait("resume temporary animation without changing rules") { !model.userPaused && model.isPlaying }
+        try require(model.isTemporarilyAnimating && model.currentWallpaperOptions == bOptions,
+                    "Pause/Resume discarded temporary playback or rewrote the exception.")
+        var audioEdit = model.currentWallpaperOptions
+        audioEdit.volume = 0.2
+        let savedAudio = await model.updateWallpaper(b, options: audioEdit, originalOptions: model.currentWallpaperOptions)
+        try require(savedAudio && model.isTemporarilyAnimating && model.isPlaying,
+                    "Saving audio settings interrupted temporary playback.")
+        var powerEdit = model.currentWallpaperOptions
+        powerEdit.animateOnBattery = false
+        let savedPower = await model.updateWallpaper(b, options: powerEdit, originalOptions: model.currentWallpaperOptions)
+        try await wait("explicit power edit cancels temporary animation") { !model.isPlaying }
+        try require(savedPower && !model.isTemporarilyAnimating && model.globalPowerRules == globalRules,
+                    "Saving a power exception did not reset temporary playback independently of shared rules.")
         model.applyWallpaper(a)
         try await wait("A selected again") { !model.isLoading && model.activeWallpaperID == a.id && model.isPlaying }
         try require(model.currentWallpaperOptions == aOptions, "Switching back lost A's saved settings.")
@@ -99,7 +129,14 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
         model.errorMessage = nil
         print("PASS: B uses its own power/scaling profile; invalid B leaves A intact")
 
-        model.volume = 0.125 // Current settings survive restart even before saving a new preset snapshot.
+        let original = model.editorOptions(for: a)
+        var edited = original
+        edited.volume = 0.125
+        let backgroundUpdates = spy.calls
+        let saved = await model.updateWallpaper(a, options: edited, originalOptions: original)
+        try require(saved, "Unified editor could not save current wallpaper settings.")
+        try await Task.sleep(for: .milliseconds(200))
+        try require(spy.calls == backgroundUpdates, "Saving audio unnecessarily changed the macOS wallpaper.")
         let stoppedOptions = model.currentWallpaperOptions
         model.stop()
         model.shutDown()
@@ -114,7 +151,7 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
         try require(restored.currentWallpaperOptions == stoppedOptions, "Stopped restart lost current settings.")
         restored.togglePlayback()
         try await wait("restored A resumed") { !restored.isLoading && restored.hasWallpaper && restored.isPlaying }
-        try require(restored.currentWallpaperOptions == stoppedOptions, "Resume overwrote unsaved current settings.")
+        try require(restored.currentWallpaperOptions == stoppedOptions, "Resume overwrote the unified editor's saved settings.")
         let windowIDs = Set(wallpaperWindows.map(\.windowNumber))
         let removedB = await restored.deleteWallpaper(b)
         try require(removedB && restored.activeWallpaperID == a.id && restored.isPlaying, "Deleting inactive B disrupted A.")
@@ -138,9 +175,30 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
         guard let imported = restoredLibrary.entries.first else { throw ProbeFailure(message: "Import action lost its entry.") }
         try require(restoredLibrary.entries.count == 1 && restored.activeWallpaperID == imported.id,
                     "Import and queued collection reload did not agree on the active entry.")
+        try require(imported.options.usesGlobalPowerRules && restored.globalPowerRules == globalRules,
+                    "New imports must inherit common rules without copying an earlier exception.")
         let removedImport = await restored.deleteWallpaper(imported)
         try require(removedImport && wallpaperWindows.isEmpty, "Imported wallpaper did not clean up.")
         print("PASS: stopped restart, resume and active/inactive deletion preserve ownership and clean up native windows")
+
+        restored.selectVideo(video)
+        try await wait("external video selected") { !restored.isLoading && restored.hasWallpaper && restored.isPlaying }
+        var externalOptions = restored.currentWallpaperOptions
+        externalOptions.usesGlobalPowerRules = false
+        externalOptions.animateOnExternalPower = false
+        let savedExternal = await restored.updateCurrentWallpaper(options: externalOptions, expectedURL: video)
+        try await wait("external override becomes static") { !restored.isPlaying }
+        try require(savedExternal && preferences.wallpaperEnabled && restored.activeWallpaperID == nil,
+                    "The external custom policy was not saved for enabled wallpaper.")
+        restored.shutDown()
+        let externalRestart = makeModel(WallpaperLibraryController(library: storage))
+        defer { externalRestart.shutDown() }
+        externalRestart.restore()
+        try await wait("enabled external wallpaper restored") { !externalRestart.isLoading && externalRestart.hasWallpaper }
+        try require(!externalRestart.isPlaying && externalRestart.currentWallpaperOptions == externalOptions
+                    && externalRestart.globalPowerRules == globalRules,
+                    "Enabled external restore lost its individual power settings.")
+        print("PASS: an external wallpaper keeps its saved exception across an enabled restart")
     }
 
     private var wallpaperWindows: [NSWindow] { NSApp.windows.filter { $0.isVisible && $0.level.rawValue < NSWindow.Level.normal.rawValue } }

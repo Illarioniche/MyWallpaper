@@ -86,7 +86,7 @@ struct PowerPlaybackModelTests {
     }
 
     @Test(arguments: [PowerSource.external, .battery, .unknown])
-    func explicitPlayOfAStoppedSelectionEnablesOnlyItsCurrentProfile(_ source: PowerSource) throws {
+    func explicitPlayOfAStoppedSelectionNeverChangesPermanentPowerRules(_ source: PowerSource) throws {
         let fixture = FileManager.default.temporaryDirectory
             .appendingPathComponent("MyWallpaperPowerSelection-\(UUID().uuidString).txt")
         try Data("Deliberately not media: this test must never create a video window.".utf8).write(to: fixture)
@@ -105,10 +105,9 @@ struct PowerPlaybackModelTests {
 
             model.togglePlayback()
 
-            #expect(model.animateOnBattery == (source == .battery))
-            #expect(preferences.animateOnBattery == (source == .battery))
-            #expect(model.animateOnExternalPower == (source != .battery))
-            #expect(preferences.animateOnExternalPower == (source != .battery))
+            #expect(!model.animateOnBattery && !model.animateOnExternalPower)
+            #expect(!preferences.globalPowerRules.animateOnBattery && !preferences.globalPowerRules.animateOnExternalPower)
+            #expect(!preferences.animateOnBattery && !preferences.animateOnExternalPower)
             #expect(!model.hasWallpaper, "No video is decoded or displayed by this profile-action test.")
         }
     }

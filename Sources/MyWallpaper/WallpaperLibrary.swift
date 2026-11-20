@@ -12,6 +12,25 @@ struct WallpaperLibraryOptions: Codable, Equatable, Sendable {
     var pauseInLowPowerMode = true
     var pauseWhenCovered = true
     var syncSystemWallpaper = false
+    var usesGlobalPowerRules = true
+
+    var powerRules: WallpaperPowerRules {
+        get {
+            WallpaperPowerRules(animateOnExternalPower: animateOnExternalPower,
+                animateOnBattery: animateOnBattery, pauseInLowPowerMode: pauseInLowPowerMode,
+                pauseWhenCovered: pauseWhenCovered)
+        }
+        set {
+            animateOnExternalPower = newValue.animateOnExternalPower
+            animateOnBattery = newValue.animateOnBattery
+            pauseInLowPowerMode = newValue.pauseInLowPowerMode
+            pauseWhenCovered = newValue.pauseWhenCovered
+        }
+    }
+
+    func effectivePowerRules(defaults: WallpaperPowerRules) -> WallpaperPowerRules {
+        usesGlobalPowerRules ? defaults : powerRules
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.target == rhs.target && lhs.scaling == rhs.scaling && lhs.isMuted == rhs.isMuted
@@ -21,6 +40,31 @@ struct WallpaperLibraryOptions: Codable, Equatable, Sendable {
             && lhs.pauseInLowPowerMode == rhs.pauseInLowPowerMode
             && lhs.pauseWhenCovered == rhs.pauseWhenCovered
             && lhs.syncSystemWallpaper == rhs.syncSystemWallpaper
+            && lhs.usesGlobalPowerRules == rhs.usesGlobalPowerRules
+    }
+}
+
+extension WallpaperLibraryOptions {
+    private enum CodingKeys: String, CodingKey {
+        case target, scaling, isMuted, volume, animateOnExternalPower, animateOnBattery
+        case pauseInLowPowerMode, pauseWhenCovered, syncSystemWallpaper, usesGlobalPowerRules
+    }
+
+    /// Version 0.8 saved explicit power settings in every entry. Missing the
+    /// inheritance marker means those exact settings remain an exception.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        target = try values.decode(DisplayTarget.self, forKey: .target)
+        scaling = try values.decode(VideoScaling.self, forKey: .scaling)
+        isMuted = try values.decode(Bool.self, forKey: .isMuted)
+        volume = try values.decode(Double.self, forKey: .volume)
+        animateOnExternalPower = try values.decode(Bool.self, forKey: .animateOnExternalPower)
+        animateOnBattery = try values.decode(Bool.self, forKey: .animateOnBattery)
+        pauseInLowPowerMode = try values.decode(Bool.self, forKey: .pauseInLowPowerMode)
+        pauseWhenCovered = try values.decode(Bool.self, forKey: .pauseWhenCovered)
+        syncSystemWallpaper = try values.decode(Bool.self, forKey: .syncSystemWallpaper)
+        usesGlobalPowerRules = values.contains(.usesGlobalPowerRules)
+            ? try values.decode(Bool.self, forKey: .usesGlobalPowerRules) : false
     }
 }
 
