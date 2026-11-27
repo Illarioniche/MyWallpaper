@@ -21,6 +21,10 @@ enum RenderUI {
         let output = URL(fileURLWithPath: CommandLine.arguments.count > 1
                          ? CommandLine.arguments[1] : ".build/verification", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--updates-only") {
+            try await renderSeamlessUpdateStates(output: output)
+            return
+        }
         let domain = "MyWallpaperUIPreview.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: domain) else {
             throw PreviewFailure(message: "Cannot create isolated preferences.")
@@ -164,6 +168,7 @@ enum RenderUI {
             }
         }
         try await renderUpdateStates(output: output, sizes: sizes, libraryRoot: libraryFixtures)
+        try await renderSeamlessUpdateStates(output: output)
         try await renderLoginStates(output: output, libraryRoot: libraryFixtures)
         try await renderLocalizedAudioStates(model: model, output: output)
         try await renderWallpaperLibrary(model: model, output: output)
@@ -442,6 +447,52 @@ enum RenderUI {
     }
 
     @MainActor
+    private static func renderSeamlessUpdateStates(output: URL) async throws {
+        let domain = "MyWallpaperUIInstallerPreview.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: domain) else { throw PreviewFailure(message: "Missing preview preferences.") }
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let response = try updateResponse(version: "0.11.0")
+        let installation = UpdateInstallationController(currentBuild: "12", serviceFactory: { _, _ in PreviewInstallationService() })
+        installation.prepareForRelaunch = { _ in }
+        let updates = UpdateController(currentVersion: "0.10.0", defaults: defaults,
+                                       transport: { _ in response }, installation: installation)
+        await updates.checkNow()
+        for (code, language) in [("ru", AppLanguage.russian), ("en", AppLanguage.english)] {
+            let localizer = AppLocalizer(language: language)
+            for (theme, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
+                try await captureView(WhatsNewView(release: WhatsNewRelease.bundled[0], localizer: localizer, onClose: {}),
+                                      scheme: scheme, size: NSSize(width: 540, height: 570),
+                                      to: output.appendingPathComponent("ui-whats-new-\(code)-\(theme).png"))
+                try await captureView(updatePreview(updates, localizer: localizer),
+                                      scheme: scheme, size: NSSize(width: 720, height: 700),
+                                      to: output.appendingPathComponent("ui-update-install-\(code)-\(theme).png"))
+            }
+        }
+        updates.installAvailableRelease()
+        guard let id = installation.activeSessionID else { throw PreviewFailure(message: "Missing preview installation session.") }
+        installation.downloading(cancellation: {}, sessionID: id)
+        installation.receivedExpectedLength(25_000_000, sessionID: id)
+        installation.receivedData(12_000_000, sessionID: id)
+        try await captureView(updatePreview(updates, localizer: .russian), scheme: .dark,
+                              size: NSSize(width: 720, height: 700),
+                              to: output.appendingPathComponent("ui-update-downloading-ru-dark.png"))
+        installation.fail(UpdateInstallFailure(message: "Не удалось установить обновление. Текущая версия продолжает работать."), sessionID: id)
+        try await captureView(updatePreview(updates, localizer: AppLocalizer(language: .english)),
+                              scheme: .light, size: NSSize(width: 720, height: 700),
+                              to: output.appendingPathComponent("ui-update-failed-en-light.png"))
+    }
+
+    @MainActor
+    private static func updatePreview(_ updates: UpdateController, localizer: AppLocalizer) -> some View {
+        ScrollView {
+            UpdateSettingsPane(updates: updates, localizer: localizer)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(24)
+        }
+        .frame(width: 720, height: 700)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @MainActor
     private static func renderLoginStates(output: URL, libraryRoot: URL) async throws {
         let response = try updateResponse(version: "0.4.0")
         for scenario in PreviewLoginScenario.allCases {
@@ -550,6 +601,11 @@ enum RenderUI {
         try png.write(to: destination)
         print(destination.path)
     }
+}
+
+@MainActor
+private final class PreviewInstallationService: UpdateInstallationService {
+    func start() throws {}
 }
 
 private enum PreviewUpdateScenario: String, CaseIterable, Sendable {

@@ -43,6 +43,7 @@ xcrun swift test \
     --cache-path "$BUILD_ROOT/cache" \
     --config-path "$BUILD_ROOT/config" \
     --security-path "$BUILD_ROOT/security" \
+    --disable-keychain --disable-netrc \
     --disable-sandbox \
     "${TESTING_OPTIONS[@]}" \
     "$@"

@@ -30,7 +30,7 @@
 - **Always within reach.** Menu bar controls, wallpaper restoration, and launch at login.
 - **Multiple displays.** Use all displays or just the main one, with Fill or Fit scaling.
 - **System wallpaper from video.** Optionally save a frame as your regular macOS wallpaper; it stays after you stop the video or quit the app.
-- **New versions nearby.** Check GitHub for updates, see an in-app notice, and download a DMG through your browser.
+- **New versions nearby.** Update with one click: download, signature verification, restart, and What’s New.
 - **Video screen saver library.** Save variants with meaningful names, rename or delete them, and choose which to install in macOS. Currently experimental.
 - **Wallpaper and screen saver together.** Optionally synchronize the video, scaling, and power settings through a separate MyWallpaper — Sync screen saver.
 
@@ -135,15 +135,13 @@ The screen saver is always muted. Manual wallpaper pause, desktop window coverag
 
 MyWallpaper checks the latest stable release in the public [GitHub repository](https://github.com/Illarioniche/MyWallpaper/releases/latest). Automatic checks are enabled by default: the app checks whether a request is due at startup and every hour while running, but sends an automatic request no more than once every 24 hours. You can disable this in **Updates**; the manual **Check for Updates** button remains available.
 
-When a new version is found, a banner appears in the app and a badge appears on its menu bar icon. The app does not use system notifications or request notification permission. **Updates** provides the release page and, when published, links to the universal DMG and its SHA-256 file. Downloads open in your browser; the app does not download or install updates itself. If GitHub is unavailable or a check fails, your wallpaper keeps working and you can retry manually.
+When a new version is found, a banner appears in the app and a badge appears on its menu bar icon. In **Updates**, click **Update** to download the signed GitHub release, follow its progress, finish pending collection saves, and restart. Wallpapers keep working until the restart. **Later** hides the reminder until the next manual check or launch; you can reopen the offer in Updates.
 
-To update:
+Collections, settings, selected wallpaper, and manual pause are preserved. An update restart restores the current session even when normal launch restoration is disabled; stopped wallpapers remain stopped. Temporary Animate Now is retained if the power source has not changed. The new version shows **What’s New**. Close it with the window’s close button or **Done**, and it will not open automatically again for that version. You can reopen it in Updates.
 
-1. Download the DMG and quit MyWallpaper from its menu.
-2. Open the disk image and drag **MyWallpaper.app** into **Applications**, confirming that you want to replace the previous version.
-3. Eject the disk image and launch the app from **Applications**.
+Downloads can be cancelled. Network or signature errors leave the current app running; retry, the release page, and manual DMG/SHA-256 downloads remain available. Installation always requires clicking Update.
 
-Replacing the app preserves your settings and selected video; the original video file is neither moved nor deleted. See [below](#building-a-dmg) for SHA-256 verification.
+**First upgrade:** versions before 0.10.0 do not include the built-in installer. Install 0.10.0 or later manually once: download the DMG, quit MyWallpaper, replace the app in **Applications**, and launch it from there. Subsequent releases with a signed `appcast.xml` can be installed inside the app. See [below](#building-a-dmg) for SHA-256 verification.
 
 <details>
 <summary><strong>I cannot see the menu bar icon</strong></summary>
@@ -169,7 +167,7 @@ Launch at login uses the system Service Management framework. This build is ad-h
 
 ## For developers
 
-There are no external dependencies. The following sections cover building, release packaging, validation, and how the app works.
+Update installation uses [Sparkle 2.10.1](https://sparkle-project.org/) (MIT), pinned in Swift Package Manager. The first build needs internet access to download this dependency. The following sections cover building, release packaging, validation, and how the app works.
 
 ### Building from source
 
@@ -217,8 +215,8 @@ This command builds a universal app and creates a compressed disk image for drag
 ```text
 dist/
 ├── MyWallpaper.app
-├── MyWallpaper-0.9.0-universal.dmg
-└── MyWallpaper-0.9.0-universal.dmg.sha256
+├── MyWallpaper-0.10.0-universal.dmg
+└── MyWallpaper-0.10.0-universal.dmg.sha256
 ```
 
 The image contains the app, a link to Applications, and brief installation instructions. The version comes from `Info.plist`; the architecture comes from the built executable. To package an existing build without recompiling:
@@ -232,10 +230,30 @@ The filename reflects the actual architectures: `universal`, `arm64`, or `x86_64
 To verify a downloaded image, run this from the directory containing both files:
 
 ```sh
-shasum -a 256 -c MyWallpaper-0.9.0-universal.dmg.sha256
+shasum -a 256 -c MyWallpaper-0.10.0-universal.dmg.sha256
 ```
 
 The universal build includes Intel, but launch validation has been performed on Apple Silicon. Distribution with a verified developer identity separately requires Developer ID signing and Apple notarization.
+
+### Signed updates
+
+The update signing key lives in macOS Keychain under account `local.mywallpaper.MyWallpaper`; only its public key is embedded in the app. Configure it once on the release machine:
+
+```sh
+./scripts/setup-update-signing.sh
+```
+
+Keep a secure backup of the private key outside Git. Restore the same key on a different release machine: replacing it would break verification for existing users.
+
+For each release, increase both `CFBundleShortVersionString` and the integer `CFBundleVersion` in `Resources/Info.plist`, add that version’s notes to `WhatsNewRelease.bundled` and both localization catalogs, then run:
+
+```sh
+./scripts/prepare-update.sh
+# For an already-built universal app:
+./scripts/prepare-update.sh --skip-build
+```
+
+The script verifies the universal app and DMG, creates SHA-256, and signs the archive and `dist/appcast.xml`. Attach the **DMG, `.dmg.sha256`, and `appcast.xml`** to the corresponding stable GitHub Release before publishing it. The feed is fetched from `releases/latest/download/appcast.xml`, so every subsequent stable release needs this asset. These scripts do not upload files or publish releases. Ed25519 update signatures are separate from Apple Developer ID signing and notarization.
 
 ### Icons and screenshots
 
@@ -285,6 +303,17 @@ Swift Testing unit tests cover saved settings, language selection and translatio
 ```sh
 ./scripts/test.sh
 ```
+
+The feed generator and real Sparkle installer have separate checks:
+
+```sh
+python3 -B -m unittest discover -s Tests/Release -p 'test_*.py'
+./scripts/sparkle-tools.sh
+python3 scripts/test-update-installer.py
+```
+
+The integration test requires an active macOS session. It creates isolated fixture apps, an ephemeral signing key, and a loopback HTTP server to verify app replacement, relaunch, state preservation, and rejection of invalid archive/feed signatures. It does not modify the regular app, collections, or production signing key. Artifacts and logs are written to `.build/updater-probe`; the temporary private key is deleted afterwards.
+
 
 To test coverage with real macOS windows without loading a video or changing settings:
 
@@ -337,6 +366,6 @@ IOKit reports the power source through system notifications, without a timer. Fo
 
 `AppLocalizer` selects the Russian or English `Resources/*/Localizable.strings` catalog according to the app's language setting. Changing the language updates the interface and menus without changing macOS settings. Volume and mute are stored separately and applied to the video players; muting does not reset the chosen volume.
 
-`UpdateController` requests the public GitHub API at `GET /repos/Illarioniche/MyWallpaper/releases/latest` and compares the installed app version with the latest stable release. Prereleases and drafts are not offered. The controller stores the automatic-check preference, the last attempt time for the daily interval, and the last successful check time. If a later check fails, a previously discovered update remains available. DMG, release-page, and SHA-256 links open in the browser. This mechanism does not install updates or modify app files.
+`UpdateController` requests the public GitHub API at `GET /repos/Illarioniche/MyWallpaper/releases/latest` and compares the installed app version with the latest stable release. Prereleases and drafts are not offered. The controller stores the automatic-check preference, the last attempt time for the daily interval, and the last successful check time. If a later check fails, a previously discovered update remains available. After explicit consent, `UpdateInstallationController` starts Sparkle, requiring Ed25519 signatures on both the feed and DMG, a matching release version and download URL, and an increasing build number. Sparkle’s scheduler is disabled; `UpdateController` alone handles periodic checks. A one-use `UpdateRelaunchState` restores the session after a confirmed installation. `WhatsNewController` shows bundled localized notes matching the installed version and remembers dismissal.
 
 The project is an MVP. The distributed DMG uses a local ad-hoc signature. Separate videos per display, a scene editor, and Developer ID signing/notarization are not yet implemented. Video wallpapers use CPU/GPU resources; energy use depends on resolution, frame rate, and the number of displays.

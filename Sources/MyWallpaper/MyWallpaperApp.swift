@@ -16,11 +16,14 @@ enum MyWallpaperApp {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private let model = WallpaperModel()
     private let navigation = AppNavigation()
     private var statusItem: NSStatusItem?
     private var controlWindow: NSWindow?
+    private var whatsNewWindow: NSWindow?
+    private let whatsNew = WhatsNewController()
+    private let updateRelaunch = UpdateRelaunchState()
     private var openedFile = false
     private var launchedAtLogin = false
     private lazy var settings = SettingsMenuController(model: model)
@@ -54,36 +57,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         statusItem = item
+        configureUpdateInstallation()
         startUpdateChecks()
-        if !openedFile { model.restore() }
-        if !launchedAtLogin { showWindow() }
+        let restoredSession = updateRelaunch.consume(
+            currentVersion: model.updates.currentVersion,
+            currentBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "")
+        if !openedFile { model.restore(afterUpdate: restoredSession) }
+        if restoredSession?.windowWasVisible ?? !launchedAtLogin { showWindow() }
+        if whatsNew.recordLaunch(wasUpdated: restoredSession != nil) { showWhatsNew() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.screenSaver.isWorking || model.isWorkingWithWallpapers || model.wallpaperLibrary.isWorking
-                || model.screenSaverSync.isWorking else { return .terminateNow }
+        switch model.updates.installation.state {
+        case .checking, .downloading: model.updates.installation.cancel()
+        default: break
+        }
+        let waitingForSave = hasPendingWork
+        guard waitingForSave || model.updates.installation.state.requiresPreparationBeforeQuit else { return .terminateNow }
         // Finish pending library operations before quitting, including cleanup
         // of staging folders when a large video is still being copied.
-        navigation.section = model.screenSaver.isWorking || model.screenSaverSync.isWorking ? .screenSaver : .wallpaper
+        navigation.section = model.updates.installation.isBusy ? .updates
+            : (model.screenSaver.isWorking || model.screenSaverSync.isWorking ? .screenSaver : .wallpaper)
         showWindow()
         if terminationTask == nil {
             terminationTask = Task { [weak self] in
                 guard let self else { return }
-                let work = self.model.screenSaver.$isWorking
-                    .combineLatest(self.model.$isWorkingWithWallpapers, self.model.wallpaperLibrary.$isWorking,
-                                   self.model.screenSaverSync.$isWorking)
-                    .map { $0 || $1 || $2 || $3 }
-                    .removeDuplicates()
-                for await busy in work.values {
-                    if !busy {
-                        self.terminationTask = nil
-                        sender.reply(toApplicationShouldTerminate: self.model.screenSaver.failure == nil
-                            && self.model.wallpaperLibrary.failure == nil && self.model.screenSaverSync.failure == nil)
-                        break
-                    }
-                }
+                do { try await self.waitForPendingWork(includingUpdatePreparation: true) }
+                catch { return }
+                self.terminationTask = nil
+                let mayTerminate = !waitingForSave || (self.model.screenSaver.failure == nil
+                    && self.model.wallpaperLibrary.failure == nil && self.model.screenSaverSync.failure == nil)
+                // Sparkle may retain the staged installer after a refused quit.
+                // Keep its receipt for Retry Restart; an actual installer abort clears it.
+                sender.reply(toApplicationShouldTerminate: mayTerminate)
             }
         }
         return .terminateLater
@@ -108,6 +116,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        updateRelaunch.finalize(UpdatePlaybackSnapshot(
+            wallpaperWasActive: model.hasWallpaper, userPaused: model.userPaused,
+            temporarilyAnimating: model.isTemporarilyAnimating, powerSource: model.powerSource.rawValue,
+            windowWasVisible: controlWindow?.isVisible == true))
         updateTimer?.invalidate()
         updateCheckTask?.cancel()
         terminationTask?.cancel()
@@ -124,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
-        if let release = model.updates.availableRelease {
+        if let release = model.updates.offeredRelease {
             let update = addItem(model.localizer.format("Доступна версия %@…", release.version), action: #selector(showUpdates), to: menu)
             update.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
             menu.addItem(.separator())
@@ -205,6 +217,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showWindow()
     }
 
+    @objc private func showWhatsNew() {
+        guard let release = whatsNew.release else { return }
+        if whatsNewWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 530),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = model.localizer.text("Что нового")
+            window.titlebarAppearsTransparent = true
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.contentView = NSHostingView(rootView: WhatsNewWindowContent(model: model, release: release) { [weak self] in
+                self?.whatsNewWindow?.performClose(nil)
+            })
+            window.center()
+            whatsNewWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        whatsNewWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === whatsNewWindow else { return }
+        whatsNew.dismiss()
+    }
+
+    private var hasPendingWork: Bool {
+        model.isLoading || model.isSyncingSystemWallpaper || model.screenSaver.isWorking
+            || model.isWorkingWithWallpapers || model.wallpaperLibrary.isWorking || model.screenSaverSync.isWorking
+    }
+
+    private func waitForPendingWork(includingUpdatePreparation: Bool = false) async throws {
+        while hasPendingWork || (includingUpdatePreparation && model.updates.installation.state.requiresPreparationBeforeQuit) {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try Task.checkCancellation()
+    }
+
+    private func configureUpdateInstallation() {
+        model.updates.onShowWhatsNew = { [weak self] in self?.showWhatsNew() }
+        model.updates.installation.openUpdates = { [weak self] in self?.showUpdates() }
+        model.updates.installation.prepareForRelaunch = { [weak self] target in
+            guard let self else { throw CancellationError() }
+            let savingSaver = self.model.screenSaver.isWorking
+            let savingWallpaper = self.model.isWorkingWithWallpapers || self.model.wallpaperLibrary.isWorking
+            let savingSync = self.model.screenSaverSync.isWorking
+            try await self.waitForPendingWork()
+            guard !(savingSaver && self.model.screenSaver.failure != nil),
+                  !(savingWallpaper && self.model.wallpaperLibrary.failure != nil),
+                  !(savingSync && self.model.screenSaverSync.failure != nil) else {
+                throw UpdateInstallFailure(message: "Не удалось сохранить коллекцию. Проверь сообщение об ошибке и повтори обновление.")
+            }
+            self.updateRelaunch.prepare(
+                sourceVersion: self.model.updates.currentVersion,
+                sourceBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
+                targetVersion: target.version, targetBuild: target.build)
+        }
+        model.updates.installation.installationDidAbort = { [weak self] in self?.updateRelaunch.cancel() }
+    }
+
     @objc private func checkForUpdates() {
         showUpdates()
         Task { await model.updates.checkNow() }
@@ -216,6 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Task { @MainActor in
                     self?.buildMainMenu()
                     self?.refreshUpdateIndicator()
+                    self?.whatsNewWindow?.title = self?.model.localizer.text("Что нового") ?? "MyWallpaper"
                 }
             }
             .store(in: &subscriptions)
@@ -252,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func refreshUpdateIndicator() {
-        let release = model.updates.availableRelease
+        let release = model.updates.offeredRelease
         statusItem?.button?.image = AppIconArtwork.menuBarImage(hasUpdate: release != nil)
         statusItem?.button?.toolTip = release.map { model.localizer.format("MyWallpaper — доступна версия %@", $0.version) }
             ?? model.localizer.text("MyWallpaper — живые обои")
@@ -274,6 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addItem(model.localizer.text("О MyWallpaper"), action: #selector(showWindow), to: appMenu)
         addItem(model.localizer.text("Настройки…"), action: #selector(showSettings), key: ",", to: appMenu)
         addItem(model.localizer.text("Проверить обновления…"), action: #selector(checkForUpdates), to: appMenu)
+        addItem(model.localizer.text("Что нового"), action: #selector(showWhatsNew), to: appMenu)
         appMenu.addItem(.separator())
         addItem(model.localizer.text("Завершить MyWallpaper"), action: #selector(quit), key: "q", to: appMenu)
         appItem.submenu = appMenu
@@ -286,5 +358,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileItem.submenu = fileMenu
         menu.addItem(fileItem)
         NSApp.mainMenu = menu
+    }
+}
+
+@MainActor
+private struct WhatsNewWindowContent: View {
+    @ObservedObject var model: WallpaperModel
+    let release: WhatsNewRelease
+    let onClose: () -> Void
+
+    var body: some View {
+        WhatsNewView(release: release, localizer: model.localizer, onClose: onClose)
+            .environment(\.locale, model.localizer.locale)
     }
 }

@@ -29,9 +29,12 @@ typealias UpdateTransport = @Sendable (URLRequest) async throws -> UpdateHTTPRes
 
 @MainActor
 final class UpdateController: ObservableObject {
+    let installation: UpdateInstallationController
+    var onShowWhatsNew: (() -> Void)?
     @Published private(set) var state: UpdateState = .idle
     @Published private(set) var lastChecked: Date?
     @Published private var knownAvailableRelease: UpdateRelease?
+    @Published private var deferredVersion: String?
     @Published var automaticChecksEnabled: Bool {
         didSet { defaults.set(automaticChecksEnabled, forKey: Keys.automaticChecks) }
     }
@@ -45,6 +48,10 @@ final class UpdateController: ObservableObject {
 
     let currentVersion: String
     var availableRelease: UpdateRelease? { knownAvailableRelease }
+    var offeredRelease: UpdateRelease? {
+        guard knownAvailableRelease?.version != deferredVersion else { return nil }
+        return knownAvailableRelease
+    }
     var isChecking: Bool { state == .checking }
 
     private let defaults: UserDefaults
@@ -52,13 +59,16 @@ final class UpdateController: ObservableObject {
     private let transport: UpdateTransport
     private var lastAttempt: Date?
     private var currentFailure: UpdateFailure?
+    private var installationObservation: AnyCancellable?
     private static let automaticInterval: TimeInterval = 24 * 60 * 60
 
     init(currentVersion: String? = nil,
          defaults: UserDefaults = .standard,
          now: @escaping @MainActor @Sendable () -> Date = { Date() },
          transport: @escaping UpdateTransport = GitHubUpdateTransport.fetch,
-         localizer: AppLocalizer = .russian) {
+         localizer: AppLocalizer = .russian,
+         installation: UpdateInstallationController? = nil) {
+        self.installation = installation ?? UpdateInstallationController()
         self.defaults = defaults
         self.now = now
         self.transport = transport
@@ -69,6 +79,22 @@ final class UpdateController: ObservableObject {
         lastChecked = defaults.object(forKey: Keys.lastChecked) as? Date
         lastAttempt = defaults.object(forKey: Keys.lastAttempt) as? Date
         restoreCachedRelease()
+        installationObservation = self.installation.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+    }
+
+    func deferAvailableRelease() {
+        guard !installation.isBusy else { return }
+        deferredVersion = knownAvailableRelease?.version
+    }
+
+    func showDeferredRelease() { deferredVersion = nil }
+
+    func installAvailableRelease() {
+        guard let release = availableRelease else { return }
+        deferredVersion = nil
+        installation.start(release: release, currentVersion: currentVersion)
     }
 
     func startCheck() {
@@ -82,11 +108,16 @@ final class UpdateController: ObservableObject {
             // A clock moved backwards should not suppress checks indefinitely.
             if elapsed >= 0 && elapsed < Self.automaticInterval { return }
         }
-        await checkNow()
+        await performCheck()
     }
 
     func checkNow() async {
-        guard !isChecking else { return }
+        deferredVersion = nil
+        await performCheck()
+    }
+
+    private func performCheck() async {
+        guard !isChecking, !installation.isBusy else { return }
         currentFailure = nil
         state = .checking
         lastAttempt = now()

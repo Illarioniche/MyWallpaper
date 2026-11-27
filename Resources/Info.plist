@@ -13,9 +13,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.9.0</string>
+    <string>0.10.0</string>
     <key>CFBundleVersion</key>
-    <string>11</string>
+    <string>12</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleDevelopmentRegion</key>
@@ -35,5 +35,21 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/Illarioniche/MyWallpaper/releases/latest/download/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key>
+    <false/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUAllowsAutomaticUpdates</key>
+    <false/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <key>SUEnableJavaScript</key>
+    <false/>
+    <key>SUPublicEDKey</key>
+    <string>NKhSttUS67zrFuUQfybDhzJvwYYRY7Gt8ISccAeW9/k=</string>
 </dict>
 </plist>
