@@ -199,6 +199,37 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
                     && externalRestart.globalPowerRules == globalRules,
                     "Enabled external restore lost its individual power settings.")
         print("PASS: an external wallpaper keeps its saved exception across an enabled restart")
+
+        // An updater restart preserves a live session independently of ordinary launch settings.
+        preferences.restoreOnLaunch = false
+        externalRestart.togglePlayback()
+        try await wait("temporary animation before updater restart") { externalRestart.isPlaying }
+        externalRestart.togglePlayback()
+        let pausedSnapshot = UpdatePlaybackSnapshot(wallpaperWasActive: externalRestart.hasWallpaper,
+            userPaused: externalRestart.userPaused, temporarilyAnimating: externalRestart.isTemporarilyAnimating,
+            powerSource: externalRestart.powerSource.rawValue, windowWasVisible: false)
+        externalRestart.shutDown()
+        let updateRestart = makeModel(WallpaperLibraryController(library: storage))
+        defer { updateRestart.shutDown() }
+        updateRestart.restore(afterUpdate: pausedSnapshot)
+        try await wait("paused wallpaper restored by updater") { !updateRestart.isLoading && updateRestart.hasWallpaper }
+        try require(updateRestart.userPaused && !updateRestart.isPlaying && updateRestart.isTemporarilyAnimating,
+                    "Updater restart lost the manual pause or temporary animation choice.")
+        try require(!preferences.restoreOnLaunch && updateRestart.currentWallpaperOptions == externalOptions,
+                    "Updater restart changed the launch preference or wallpaper settings.")
+        updateRestart.togglePlayback()
+        try await wait("resuming updater-restored wallpaper") { updateRestart.isPlaying }
+        updateRestart.stop()
+        let stoppedSnapshot = UpdatePlaybackSnapshot(wallpaperWasActive: false, userPaused: false,
+            temporarilyAnimating: false, powerSource: "external", windowWasVisible: false)
+        updateRestart.shutDown()
+        let stoppedUpdateRestart = makeModel(WallpaperLibraryController(library: storage))
+        defer { stoppedUpdateRestart.shutDown() }
+        stoppedUpdateRestart.restore(afterUpdate: stoppedSnapshot)
+        try await wait("stopped updater session selection") { stoppedUpdateRestart.selectedURL != nil }
+        try require(!stoppedUpdateRestart.hasWallpaper && !preferences.restoreOnLaunch,
+                    "Updater restart unexpectedly enabled stopped wallpaper.")
+        print("PASS: updater restart preserves pause, temporary animation, settings and stopped state")
     }
 
     private var wallpaperWindows: [NSWindow] { NSApp.windows.filter { $0.isVisible && $0.level.rawValue < NSWindow.Level.normal.rawValue } }

@@ -252,9 +252,20 @@ final class WallpaperModel: ObservableObject {
         updatePlayback()
     }
 
-    func restore() {
+    func restore(afterUpdate snapshot: UpdatePlaybackSnapshot? = nil) {
+        // A restart requested by the updater resumes this session even when the
+        // user disabled restoration on ordinary launches. A stopped session stays stopped.
+        let shouldPlay = snapshot?.wallpaperWasActive
+            ?? (preferences.restoreOnLaunch && preferences.wallpaperEnabled)
+        let temporarilyAnimate = snapshot?.temporarilyAnimating == true
+            && snapshot?.powerSource == powerSource.rawValue
+        if let snapshot {
+            userPaused = snapshot.userPaused
+            policy.userPaused = snapshot.userPaused
+            preferences.userPaused = snapshot.userPaused
+        }
         guard let id = preferences.activeWallpaperID else {
-            restoreExternalVideo()
+            restoreExternalVideo(shouldPlay: shouldPlay, temporarilyAnimate: temporarilyAnimate)
             return
         }
         libraryTask?.cancel()
@@ -274,8 +285,9 @@ final class WallpaperModel: ObservableObject {
             do {
                 let url = try self.wallpaperLibrary.videoURL(for: entry)
                 if !self.hasLegacyCurrentSettings { self.applyOptions(entry.options) }
-                if self.preferences.restoreOnLaunch && self.preferences.wallpaperEnabled {
-                    self.selectVideo(url, preservePause: true, libraryEntry: entry, applySavedOptions: false)
+                if shouldPlay {
+                    self.selectVideo(url, preservePause: true, libraryEntry: entry, applySavedOptions: false,
+                                     temporarilyAnimate: temporarilyAnimate && snapshot?.powerSource == self.powerSource.rawValue)
                 } else {
                     self.selectedURL = url
                     self.thumbnail = self.wallpaperLibrary.thumbnails[id]
@@ -285,7 +297,7 @@ final class WallpaperModel: ObservableObject {
         }
     }
 
-    private func restoreExternalVideo() {
+    private func restoreExternalVideo(shouldPlay: Bool, temporarilyAnimate: Bool) {
         guard let bookmark = preferences.videoBookmark else { return }
         do {
             var stale = false
@@ -305,8 +317,8 @@ final class WallpaperModel: ObservableObject {
                     options: [],
                     includingResourceValuesForKeys: nil, relativeTo: nil)
             }
-            if preferences.restoreOnLaunch && preferences.wallpaperEnabled {
-                selectVideo(url, preservePause: true, applySavedOptions: false)
+            if shouldPlay {
+                selectVideo(url, preservePause: true, applySavedOptions: false, temporarilyAnimate: temporarilyAnimate)
             } else {
                 selectedURL = url
                 synchronizeScreenSaver()
@@ -354,6 +366,7 @@ final class WallpaperModel: ObservableObject {
         cancelSystemWallpaperSync()
         screenSaverSync.cancelSynchronization()
         let requestID = UUID()
+        let temporaryAnimationSource = powerSource
         loadID = requestID
         isLoading = true
         errorMessage = nil
@@ -393,7 +406,8 @@ final class WallpaperModel: ObservableObject {
                     self.wallpaperPowerOverride = nil
                     self.refreshEffectivePowerRules()
                 }
-                self.setTemporaryAnimation(temporarilyAnimate && !self.permanentAnimationIsAllowed)
+                self.setTemporaryAnimation(temporarilyAnimate && temporaryAnimationSource == self.powerSource
+                                           && !self.permanentAnimationIsAllowed)
                 if applySavedOptions { self.clearLegacyCurrentSettings() }
                 if !preservePause {
                     self.userPaused = false

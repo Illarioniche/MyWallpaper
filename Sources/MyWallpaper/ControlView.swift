@@ -23,7 +23,7 @@ struct ControlView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         if let error = model.errorMessage { errorBanner(error) }
-                        if navigation.section != .updates, let release = updates.availableRelease {
+                        if navigation.section != .updates, let release = updates.offeredRelease {
                             UpdateAvailableBanner(version: release.version, localizer: model.localizer) { navigation.section = .updates }
                         }
                         switch navigation.section {
@@ -137,7 +137,7 @@ struct ControlView: View {
         HStack(spacing: 11) {
             SettingsIcon(symbol: section.symbol, color: section.color, size: 28)
             Text(model.localizer.text(section.title)).font(.system(size: 13, weight: .medium))
-            if section == .updates, updates.availableRelease != nil {
+            if section == .updates, updates.offeredRelease != nil {
                 Circle().fill(Color.teal).frame(width: 6, height: 6)
                     .accessibilityLabel(model.localizer.text("Доступна новая версия"))
             }

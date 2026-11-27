@@ -25,6 +25,8 @@ BUILD_OPTIONS=(
     --cache-path "$BUILD_ROOT/cache"
     --config-path "$BUILD_ROOT/config"
     --security-path "$BUILD_ROOT/security"
+    --disable-keychain
+    --disable-netrc
     --disable-sandbox
     -c release
 )
@@ -55,6 +57,32 @@ fi
 chmod +x "$APP_PATH/Contents/MacOS/.MyWallpaper.new"
 mv -f "$APP_PATH/Contents/MacOS/.MyWallpaper.new" "$APP_PATH/Contents/MacOS/MyWallpaper"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+
+# Sparkle is a dynamic framework, including its own installer application and
+# XPC services. Keep the vendor's nested signatures and framework symlinks intact;
+# signing the outer application seals them without re-signing helpers incorrectly.
+SPARKLE_SOURCE="$BUILD_ROOT/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+SPARKLE_TARGET="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+mkdir -p "$APP_PATH/Contents/Frameworks"
+/usr/bin/codesign --verify --deep --strict "$SPARKLE_SOURCE"
+rm -rf -- "$APP_PATH/Contents/Frameworks/.Sparkle.new.framework"
+/usr/bin/ditto "$SPARKLE_SOURCE" "$APP_PATH/Contents/Frameworks/.Sparkle.new.framework"
+if [[ -e "$SPARKLE_TARGET" ]]; then
+    rm -rf -- "$APP_PATH/Contents/Frameworks/.Sparkle.previous.framework"
+    mv "$SPARKLE_TARGET" "$APP_PATH/Contents/Frameworks/.Sparkle.previous.framework"
+fi
+if ! mv "$APP_PATH/Contents/Frameworks/.Sparkle.new.framework" "$SPARKLE_TARGET"; then
+    if [[ -e "$APP_PATH/Contents/Frameworks/.Sparkle.previous.framework" ]]; then
+        mv "$APP_PATH/Contents/Frameworks/.Sparkle.previous.framework" "$SPARKLE_TARGET"
+    fi
+    exit 1
+fi
+rm -rf -- "$APP_PATH/Contents/Frameworks/.Sparkle.previous.framework"
+/usr/bin/codesign --verify --deep --strict "$SPARKLE_TARGET"
+cp "$BUILD_ROOT/artifacts/sparkle/Sparkle/LICENSE" "$APP_PATH/Contents/Resources/Sparkle-LICENSE.txt"
+if [[ "${1:-}" == "--universal" ]]; then
+    /usr/bin/xcrun lipo "$SPARKLE_TARGET/Sparkle" -verify_arch arm64 x86_64
+fi
 for language in en ru; do
     mkdir -p "$APP_PATH/Contents/Resources/$language.lproj"
     cp "$PROJECT_ROOT/Sources/MyWallpaper/Resources/$language.lproj/Localizable.strings" \
