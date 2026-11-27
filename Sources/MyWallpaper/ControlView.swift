@@ -7,6 +7,7 @@ struct ControlView: View {
     @ObservedObject private var updates: UpdateController
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var dropTargeted = false
+    @State private var showsPlaybackExplanation = false
 
     init(model: WallpaperModel, navigation: AppNavigation = AppNavigation()) {
         self.model = model
@@ -29,7 +30,7 @@ struct ControlView: View {
                         switch navigation.section {
                         case .wallpaper: WallpaperSettingsPane(model: model, navigation: navigation)
                         case .screenSaver: ScreenSaverSettingsPane(model: model, screenSaver: model.screenSaver)
-                        case .general: GeneralSettingsPane(model: model)
+                        case .general: GeneralSettingsPane(model: model, navigation: navigation)
                         case .power: PowerSettingsPane(model: model)
                         case .updates: UpdateSettingsPane(updates: updates, localizer: model.localizer)
                         }
@@ -113,11 +114,25 @@ struct ControlView: View {
                     Text(model.status)
                         .font(.system(size: 11, weight: .medium))
                         .fixedSize(horizontal: false, vertical: true)
+                    if let explanation = model.playbackExplanation {
+                        Spacer(minLength: 0)
+                        Button { showsPlaybackExplanation.toggle() } label: {
+                            Image(systemName: "info.circle")
+                                .frame(width: 20, height: 20)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help(model.localizer.text("Почему обои на паузе?"))
+                        .accessibilityLabel(model.localizer.text("Почему обои на паузе?"))
+                        .popover(isPresented: $showsPlaybackExplanation, arrowEdge: .trailing) {
+                            PlaybackExplanationView(title: model.status, detail: explanation)
+                        }
+                    }
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(AppColors.statusBackground, in: RoundedRectangle(cornerRadius: 11))
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .contain)
 
                 Label(model.localizer.text("Всегда под рукой в строке меню"), systemImage: "menubar.rectangle")
                     .font(.system(size: 10))
@@ -174,10 +189,14 @@ struct ControlView: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 .padding(.top, 4)
-            Text(message)
-                .font(.system(size: 12))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(message)
+                    .font(.system(size: 12))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                DiagnosticCopyButton(model: model)
+                    .controlSize(.small)
+            }
             Spacer(minLength: 0)
             Button { model.errorMessage = nil } label: {
                 Image(systemName: "xmark").frame(width: 26, height: 26)
@@ -199,6 +218,7 @@ private struct WallpaperSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            if model.showsQuickStart { QuickStartCard(model: model) }
             if model.selectedURL != nil || model.isLoading { currentWallpaper }
             WallpaperLibraryPane(model: model) { navigation.configureWallpaper($0) }
         }
@@ -235,6 +255,7 @@ private struct WallpaperSettingsPane: View {
                     Label(model.status, systemImage: model.isPlaying ? "play.circle.fill" : "pause.circle")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .help(model.playbackExplanation ?? model.status)
                     if model.isTemporarilyAnimating {
                         Text(model.localizer.text("Анимация включена временно. Правила питания не изменены."))
                             .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -283,6 +304,7 @@ private struct WallpaperSettingsPane: View {
 @MainActor
 private struct GeneralSettingsPane: View {
     @ObservedObject var model: WallpaperModel
+    @ObservedObject var navigation: AppNavigation
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -310,23 +332,10 @@ private struct GeneralSettingsPane: View {
                     .frame(width: 170)
                 }
             }
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "menubar.rectangle")
-                    .font(.system(size: 19, weight: .light))
-                    .foregroundStyle(.teal)
-                    .padding(.top, 2)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(model.localizer.text("Закрой окно — обои останутся"))
-                        .font(.system(size: 12, weight: .medium))
-                    Text(model.localizer.text("Управление всегда доступно в строке меню: пауза, выбор видео и настройки."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            GeneralHelpSection(model: model) {
+                model.showQuickStart()
+                navigation.section = .wallpaper
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.teal.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 }

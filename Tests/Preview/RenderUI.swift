@@ -25,6 +25,10 @@ enum RenderUI {
             try await renderSeamlessUpdateStates(output: output)
             return
         }
+        if CommandLine.arguments.contains("--polish-only") {
+            try await renderPolishStates(output: output)
+            return
+        }
         let domain = "MyWallpaperUIPreview.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: domain) else {
             throw PreviewFailure(message: "Cannot create isolated preferences.")
@@ -189,6 +193,101 @@ enum RenderUI {
                                       to: output.appendingPathComponent("ui-screenSaver-create-\(language.rawValue)-\(theme).png"))
                 }
             }
+        }
+    }
+
+    /// First-run/support UI only. No video, live installation lookup, or desktop adapter is used.
+    /// Invoke as `render-ui <output-directory> --polish-only`.
+    @MainActor
+    private static func renderPolishStates(output: URL) async throws {
+        let domain = "MyWallpaperUIPolishPreview.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: domain) else {
+            throw PreviewFailure(message: "Cannot create isolated polish preferences.")
+        }
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let fixtures = output.appendingPathComponent("PolishPreview-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: fixtures) }
+        let preferences = WallpaperPreferences(defaults: defaults)
+        preferences.restoreOnLaunch = false
+        preferences.wallpaperEnabled = false
+        preferences.syncSystemWallpaper = false
+        preferences.syncScreenSaver = false
+        let updates = UpdateController(currentVersion: "0.10.0", defaults: defaults, transport: { _ in
+            throw PreviewFailure(message: "Network requests are disabled in polish previews.")
+        })
+        updates.automaticChecksEnabled = false
+        let model = WallpaperModel(
+            preferences: preferences,
+            loginItems: LoginItemController(service: PreviewLoginService(), notificationCenter: NotificationCenter()),
+            powerMonitor: PreviewPowerMonitor(), updates: updates,
+            screenSaver: ScreenSaverController(
+                templateURL: nil, library: ScreenSaverLibrary(rootURL: fixtures.appendingPathComponent("ScreenSavers")),
+                installerSigner: { _ in throw PreviewFailure(message: "Installer signing is disabled in polish previews.") },
+                openInstaller: { _ in false }),
+            systemWallpaperSync: PreviewNoDesktopSync(),
+            wallpaperLibrary: WallpaperLibraryController(library: WallpaperLibrary(
+                rootURL: fixtures.appendingPathComponent("Wallpapers"))),
+            screenSaverSync: ScreenSaverSyncController(
+                store: ScreenSaverSyncStore(rootURL: fixtures.appendingPathComponent("Sync")), templateURL: nil,
+                signer: { _ in throw PreviewFailure(message: "Installer signing is disabled in polish previews.") },
+                installationLookup: { _ in nil }, openInstaller: { _ in false }))
+        defer { model.shutDown() }
+        await model.wallpaperLibrary.reload()
+        await model.screenSaver.reloadLibrary()
+        await model.screenSaverSync.reload()
+        guard model.language == .english, model.showsQuickStart, model.selectedURL == nil,
+              !model.hasWallpaper, !model.isPlaying else {
+            throw PreviewFailure(message: "The isolated first-run fixture has unexpected defaults or playback.")
+        }
+
+        let size = NSSize(width: 820, height: 616)
+        let causes: [(String, WallpaperPauseCause)] = [
+            ("manual", .manual), ("battery", .batteryRule), ("covered", .desktopHidden)
+        ]
+        for (code, language) in [("en", AppLanguage.english), ("ru", .russian)] {
+            model.language = language
+            let localizer = model.localizer
+            for (theme, scheme) in [("light", ColorScheme.light), ("dark", .dark)] {
+                let suffix = "\(code)-\(theme)"
+                try await capture(model, section: .wallpaper, scheme: scheme, size: size,
+                                  to: output.appendingPathComponent("ui-polish-first-run-\(suffix)-compact.png"))
+                try await captureView(QuickStartCard(model: model).padding(24)
+                                      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                      .background(Color(nsColor: .windowBackgroundColor)),
+                                      scheme: scheme, size: NSSize(width: 608, height: 360),
+                                      to: output.appendingPathComponent("ui-polish-quick-start-\(suffix).png"))
+
+                let generalNavigation = AppNavigation()
+                generalNavigation.section = .general
+                try await captureView(ControlView(model: model, navigation: generalNavigation),
+                                      scheme: scheme, size: size, scrollToBottom: true,
+                                      to: output.appendingPathComponent("ui-polish-general-help-\(suffix)-compact.png"))
+                try await captureView(GeneralHelpSection(model: model, showQuickStart: {})
+                                      .padding(24)
+                                      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                      .background(Color(nsColor: .windowBackgroundColor)),
+                                      scheme: scheme, size: NSSize(width: 608, height: 310),
+                                      to: output.appendingPathComponent("ui-polish-diagnostics-help-\(suffix).png"))
+                try await capture(model, section: .screenSaver, scheme: scheme, size: size,
+                                  to: output.appendingPathComponent("ui-polish-screen-saver-beta-\(suffix)-compact.png"))
+
+                for (name, cause) in causes {
+                    var detail = localizer.text(cause.detailKey)
+                    if cause.usesPowerRules {
+                        detail += "\n\n" + localizer.text("Используются общие правила из раздела «Питание».")
+                    }
+                    // Render cause text directly; never enable wallpaper to manufacture a pause.
+                    try await captureView(PlaybackExplanationView(title: localizer.text(cause.titleKey), detail: detail)
+                                          .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                          .background(Color(nsColor: .windowBackgroundColor)),
+                                          scheme: scheme, size: NSSize(width: 350, height: 300),
+                                          to: output.appendingPathComponent("ui-polish-pause-\(name)-\(suffix).png"))
+                }
+            }
+        }
+        guard model.showsQuickStart, !preferences.hasSeenQuickStart, model.selectedURL == nil,
+              !model.hasWallpaper, !model.isPlaying, updates.state == .idle else {
+            throw PreviewFailure(message: "Polish rendering changed onboarding, playback, or update state.")
         }
     }
 
@@ -451,7 +550,10 @@ enum RenderUI {
         let domain = "MyWallpaperUIInstallerPreview.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: domain) else { throw PreviewFailure(message: "Missing preview preferences.") }
         defer { defaults.removePersistentDomain(forName: domain) }
-        let response = try updateResponse(version: "0.11.0")
+        guard let installedNotes = WhatsNewRelease.bundled.first(where: { $0.version == "1.0.0" && $0.build == "13" }) else {
+            throw PreviewFailure(message: "Missing bundled notes for MyWallpaper 1.0.0 (13).")
+        }
+        let response = try updateResponse(version: installedNotes.version)
         let installation = UpdateInstallationController(currentBuild: "12", serviceFactory: { _, _ in PreviewInstallationService() })
         installation.prepareForRelaunch = { _ in }
         let updates = UpdateController(currentVersion: "0.10.0", defaults: defaults,
@@ -460,7 +562,7 @@ enum RenderUI {
         for (code, language) in [("ru", AppLanguage.russian), ("en", AppLanguage.english)] {
             let localizer = AppLocalizer(language: language)
             for (theme, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
-                try await captureView(WhatsNewView(release: WhatsNewRelease.bundled[0], localizer: localizer, onClose: {}),
+                try await captureView(WhatsNewView(release: installedNotes, localizer: localizer, onClose: {}),
                                       scheme: scheme, size: NSSize(width: 540, height: 570),
                                       to: output.appendingPathComponent("ui-whats-new-\(code)-\(theme).png"))
                 try await captureView(updatePreview(updates, localizer: localizer),
@@ -576,11 +678,13 @@ enum RenderUI {
         try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
         if scrollToBottom {
-            func findScrollView(_ view: NSView) -> NSScrollView? {
-                if let scroll = view as? NSScrollView { return scroll }
-                return view.subviews.lazy.compactMap { findScrollView($0) }.first
+            func scrollViews(in view: NSView) -> [NSScrollView] {
+                let current = (view as? NSScrollView).map { [$0] } ?? []
+                return current + view.subviews.flatMap { scrollViews(in: $0) }
             }
-            guard let scroll = findScrollView(hosting), let document = scroll.documentView else {
+            // A full app preview also has a narrow scrolling sidebar. Scroll the content pane.
+            guard let scroll = scrollViews(in: hosting).max(by: { $0.bounds.width < $1.bounds.width }),
+                  let document = scroll.documentView else {
                 throw PreviewFailure(message: "The editor preview did not expose its scrollable content.")
             }
             let y = document.isFlipped ? max(0, document.bounds.height - scroll.contentView.bounds.height) : 0
@@ -655,6 +759,13 @@ private struct PreviewFailure: LocalizedError {
 private final class PreviewPowerMonitor: PowerSourceMonitoring {
     var source: PowerSource { .external }
     var sourcePublisher: AnyPublisher<PowerSource, Never> { Just(.external).eraseToAnyPublisher() }
+}
+
+@MainActor
+private final class PreviewNoDesktopSync: SystemWallpaperSyncing {
+    func synchronize(image: CGImage, name: String, target: DisplayTarget, scaling: VideoScaling) async throws {
+        throw PreviewFailure(message: "System wallpaper changes are disabled in polish previews.")
+    }
 }
 
 @MainActor

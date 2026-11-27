@@ -3,7 +3,7 @@ import SwiftUI
 @MainActor
 struct WhatsNewView: View {
     let release: WhatsNewRelease
-    var localizer: AppLocalizer = .russian
+    var localizer: AppLocalizer = .english
     var onClose: () -> Void
 
     var body: some View {

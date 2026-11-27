@@ -66,7 +66,7 @@ final class UpdateController: ObservableObject {
          defaults: UserDefaults = .standard,
          now: @escaping @MainActor @Sendable () -> Date = { Date() },
          transport: @escaping UpdateTransport = GitHubUpdateTransport.fetch,
-         localizer: AppLocalizer = .russian,
+         localizer: AppLocalizer = .english,
          installation: UpdateInstallationController? = nil) {
         self.installation = installation ?? UpdateInstallationController()
         self.defaults = defaults

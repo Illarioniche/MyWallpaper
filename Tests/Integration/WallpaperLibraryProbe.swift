@@ -90,6 +90,13 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
 
         model.applyWallpaper(b)
         try await wait("B still mode") { !model.isLoading && model.activeWallpaperID == b.id && model.hasWallpaper && !model.isPlaying }
+        let stillDiagnostics = model.diagnosticSnapshot
+        try require(model.currentPauseCause == .externalPowerRule && stillDiagnostics.playback == .paused
+                    && stillDiagnostics.pauseCause == .externalPowerRule && !stillDiagnostics.usesGlobalPowerRules,
+                    "B's actual static playback was not explained as an individual external-power rule.")
+        try require(model.playbackExplanation?.contains("This wallpaper is set to stay still on external power.") == true
+                    && model.playbackExplanation?.contains("The individual rules in this wallpaper’s editor apply.") == true,
+                    "B's pause explanation was not localized in the default English interface.")
         try require(model.currentWallpaperOptions == bOptions, "B settings were not restored.")
         try require(model.globalPowerRules == globalRules && preferences.globalPowerRules == globalRules,
                     "Selecting an exception overwrote common power rules.")
@@ -101,8 +108,15 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
                     "Animate Now changed persistent common rules or the saved exception.")
         model.togglePlayback()
         try await wait("manual pause during temporary animation") { model.userPaused && !model.isPlaying }
+        let manualDiagnostics = model.diagnosticSnapshot
+        try require(model.currentPauseCause == .manual && manualDiagnostics.pauseCause == .manual
+                    && manualDiagnostics.userPaused && manualDiagnostics.playback == .paused,
+                    "Manual pause did not take priority in the real playback diagnostic state.")
         model.togglePlayback()
         try await wait("resume temporary animation without changing rules") { !model.userPaused && model.isPlaying }
+        try require(model.currentPauseCause == nil && model.playbackExplanation == nil
+                    && model.diagnosticSnapshot.playback == .playing,
+                    "Resumed temporary playback retained a stale pause explanation or diagnostic state.")
         try require(model.isTemporarilyAnimating && model.currentWallpaperOptions == bOptions,
                     "Pause/Resume discarded temporary playback or rewrote the exception.")
         var audioEdit = model.currentWallpaperOptions
@@ -139,6 +153,9 @@ private final class LibraryProbeDelegate: NSObject, NSApplicationDelegate {
         try require(spy.calls == backgroundUpdates, "Saving audio unnecessarily changed the macOS wallpaper.")
         let stoppedOptions = model.currentWallpaperOptions
         model.stop()
+        try require(model.currentPauseCause == nil && model.playbackExplanation == nil
+                    && model.diagnosticSnapshot.playback == .stopped,
+                    "Stopping real playback retained a stale pause explanation or diagnostic state.")
         model.shutDown()
         try require(wallpaperWindows.isEmpty && !preferences.wallpaperEnabled, "Stop left wallpaper windows or enabled state.")
         let restoredLibrary = WallpaperLibraryController(library: storage)

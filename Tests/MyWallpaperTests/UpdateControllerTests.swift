@@ -6,6 +6,22 @@ import Testing
 @MainActor
 struct UpdateControllerTests {
     @Test
+    func defaultLanguageIsEnglishForUpdateFailures() async throws {
+        try await withDefaults { defaults in
+            let transport = UpdateTestTransport([.response(response(Data(), status: 418))])
+            let model = UpdateController(currentVersion: "0.4.0", defaults: defaults,
+                                         transport: { request in try await transport.fetch(request) })
+
+            await model.checkNow()
+
+            #expect(model.localizer == .english)
+            #expect(model.state == .failed(AppLocalizer.english.format(
+                "GitHub не смог выполнить проверку обновлений (HTTP %@).", "418")))
+            #expect(await transport.count == 1)
+        }
+    }
+
+    @Test
     func changingLanguageRendersTheCurrentFailureWithoutNetworkOrChangingKnownRelease() async throws {
         try await withDefaults { defaults in
             let transport = UpdateTestTransport([.response(response(try releaseData())), .response(response(Data(), status: 418))])
@@ -283,7 +299,7 @@ struct UpdateControllerTests {
             await controller(defaults, transport: UpdateTestTransport([.response(response(data))])).checkNow()
             let gate = UpdateTestGate()
             let model = UpdateController(currentVersion: "0.4.0", defaults: defaults,
-                                         transport: { request in try await gate.fetch(request) })
+                                         transport: { request in try await gate.fetch(request) }, localizer: .russian)
             let task = Task { await model.checkNow() }
             for _ in 0..<200 where await gate.count == 0 { try await Task.sleep(for: .milliseconds(10)) }
             let started = await gate.count == 1
@@ -310,7 +326,7 @@ struct UpdateControllerTests {
     private func controller(_ defaults: UserDefaults, clock: UpdateTestClock = UpdateTestClock(),
                             transport: UpdateTestTransport, version: String = "0.4.0") -> UpdateController {
         UpdateController(currentVersion: version, defaults: defaults, now: { clock.date },
-                         transport: { request in try await transport.fetch(request) })
+                         transport: { request in try await transport.fetch(request) }, localizer: .russian)
     }
 
     private func withDefaults(_ body: @MainActor (UserDefaults) async throws -> Void) async throws {

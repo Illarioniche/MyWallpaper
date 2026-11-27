@@ -7,7 +7,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .wallpaper: return "Обои"
-        case .screenSaver: return "Заставка"
+        case .screenSaver: return "Заставка (Beta)"
         case .general: return "Основные"
         case .power: return "Питание"
         case .updates: return "Обновления"

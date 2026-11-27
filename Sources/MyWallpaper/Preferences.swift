@@ -43,20 +43,24 @@ struct PlaybackPolicy {
             && !(lowPowerMode && pauseInLowPowerMode) && animatesOnCurrentPowerSource
     }
 
-    var pauseReason: String? {
-        if userPaused { return "На паузе" }
-        if systemSleeping || screensSleeping { return "Экран спит" }
-        if sessionInactive { return "Сеанс неактивен" }
-        if lowPowerMode && pauseInLowPowerMode { return "Пауза для экономии энергии" }
+    var pauseCause: WallpaperPauseCause? {
+        if userPaused { return .manual }
+        if systemSleeping { return .systemSleep }
+        if screensSleeping { return .displaySleep }
+        if sessionInactive { return .sessionInactive }
+        if lowPowerMode && pauseInLowPowerMode { return .lowPowerMode }
         if !animatesOnCurrentPowerSource {
             switch powerSource {
-            case .battery: return "Статичные обои · от батареи"
-            case .external: return "Статичные обои · от сети"
-            case .unknown: return "Статичные обои · источник питания неизвестен"
+            case .battery: return .batteryRule
+            case .external: return .externalPowerRule
+            case .unknown: return .unknownPowerRule
             }
         }
         return nil
     }
+
+    var pauseReason: String? { pauseCause?.titleKey }
+
 }
 
 struct WallpaperPreferences {
@@ -132,8 +136,13 @@ struct WallpaperPreferences {
     }
 
     var language: AppLanguage {
-        get { AppLanguage(rawValue: defaults.string(forKey: "appLanguage") ?? "") ?? .system }
+        get { AppLanguage(rawValue: defaults.string(forKey: "appLanguage") ?? "") ?? .english }
         nonmutating set { defaults.set(newValue.rawValue, forKey: "appLanguage") }
+    }
+
+    var hasSeenQuickStart: Bool {
+        get { defaults.bool(forKey: "hasSeenQuickStart") }
+        nonmutating set { defaults.set(newValue, forKey: "hasSeenQuickStart") }
     }
 
     var pauseInLowPowerMode: Bool {

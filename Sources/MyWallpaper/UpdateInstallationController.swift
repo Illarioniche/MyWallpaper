@@ -82,6 +82,10 @@ final class UpdateInstallationController: ObservableObject {
             state = .failed(UpdateInstallFailure(message: "Проверь обновления ещё раз: эта версия уже установлена или устарела."))
             return
         }
+        guard release.downloadURL != nil else {
+            state = .failed(UpdateInstallFailure(message: "DMG пока не прикреплён. Открой страницу релиза, чтобы посмотреть доступные файлы."))
+            return
+        }
         guard canInstall else {
             state = .failed(UpdateInstallFailure(message: "Обновление внутри приложения доступно в собранном MyWallpaper.app. Можно установить DMG вручную."))
             return

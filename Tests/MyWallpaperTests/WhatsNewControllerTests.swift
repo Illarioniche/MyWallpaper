@@ -6,6 +6,28 @@ import Testing
 @MainActor
 struct WhatsNewControllerTests {
     @Test
+    func firstStableUpgradeShowsItsOwnBundledNotesOnceAndRetainsThePreviousRelease() throws {
+        try withDefaults { defaults in
+            let previous = WhatsNewController(currentVersion: "0.10.0", currentBuild: "12", defaults: defaults)
+            #expect(previous.release?.version == "0.10.0")
+            #expect(!previous.recordLaunch())
+
+            let stable = WhatsNewController(currentVersion: "1.0.0", currentBuild: "13", defaults: defaults)
+            let release = try #require(stable.release)
+            #expect(release.version == "1.0.0" && release.build == "13")
+            #expect(stable.recordLaunch())
+            stable.dismiss()
+
+            let relaunched = WhatsNewController(currentVersion: "1.0.0", currentBuild: "13", defaults: defaults)
+            #expect(!relaunched.recordLaunch(wasUpdated: true))
+            #expect(relaunched.release == release, "Dismissal keeps notes available from Updates.")
+            #expect(WhatsNewController(currentVersion: "1.0.0", currentBuild: "12", defaults: defaults).release == nil)
+            #expect(WhatsNewController(currentVersion: "0.10.0", currentBuild: "13", defaults: defaults).release == nil)
+            #expect(previous.release?.titleKey == "Обновления без лишних шагов")
+        }
+    }
+
+    @Test
     func freshInstallationEstablishesBaselineAndKeepsNotesAvailableManually() throws {
         try withDefaults { defaults in
             let first = controller(defaults)

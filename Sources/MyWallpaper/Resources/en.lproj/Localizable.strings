@@ -442,3 +442,48 @@
 "Это окно можно снова открыть в разделе «Обновления»." = "You can reopen this window in Updates.";
 "Готово" = "Done";
 "Не удалось сохранить коллекцию. Проверь сообщение об ошибке и повтори обновление." = "The collection could not be saved. Check the error and try the update again.";
+
+// First launch, playback help, and support diagnostics.
+"Почему обои на паузе?" = "Why is the wallpaper paused?";
+"Добро пожаловать в MyWallpaper" = "Welcome to MyWallpaper";
+"Три подсказки для начала" = "Three tips to get started";
+"Закрыть подсказку" = "Dismiss Quick Start";
+"Добавь видео в коллекцию — оно станет обоями. Звук, масштаб и другие параметры — в настройках карточки." = "Add a video to your collection to use it as wallpaper. Audio, scaling, and other options are in the card’s settings.";
+"По умолчанию обои движутся от сети и замирают от батареи. Это можно изменить в разделе «Питание»." = "By default, wallpapers animate on external power and stay still on battery. Change this in Power.";
+"Закрой окно — обои продолжат работать. Пауза и настройки доступны через значок в строке меню." = "Close the window and your wallpapers keep running. Pause and settings are available from the menu bar icon.";
+"Помощь" = "Help";
+"Краткая инструкция" = "Quick Start";
+"Как выбрать видео, управлять паузой и найти приложение в строке меню." = "How to choose a video, control playback, and find the app in the menu bar.";
+"Показать" = "Show";
+"Сообщить о проблеме" = "Report a Problem";
+"Скопируй сведения о приложении и приложи их к сообщению об ошибке." = "Copy app details to include in your bug report.";
+"Без путей к файлам и названий видео. Копирование ничего не отправляет." = "No file paths or video names. Copying does not send anything.";
+"Диагностика на английском языке для сообщения об ошибке." = "English diagnostics to include in a bug report.";
+"Скопировано" = "Copied";
+"Не удалось скопировать" = "Could Not Copy";
+"Скопировать диагностику" = "Copy Diagnostics";
+"Понятно" = "Got It";
+"Mac переходит в режим сна. Видео продолжится после пробуждения, если остальные правила разрешают воспроизведение." = "Your Mac is going to sleep. The video will resume after waking if the other playback rules allow it.";
+"Экраны выключены. Видео продолжится, когда они проснутся, если остальные правила разрешают воспроизведение." = "The displays are asleep. The video will resume when they wake if the other playback rules allow it.";
+"Сеанс пользователя сейчас неактивен. Видео продолжится после возвращения в сеанс, если остальные правила разрешают воспроизведение." = "Your user session is inactive. The video will resume when you return if the other playback rules allow it.";
+"В macOS включён режим энергосбережения. После его выключения снова применятся остальные правила воспроизведения. Правило паузы можно изменить в настройках питания." = "Low Power Mode is enabled in macOS. When it turns off, the other playback rules will apply again. You can change this pause rule in the power settings.";
+"От батареи для этих обоев выбран статичный режим. Нажми «Оживить сейчас» для временной анимации. После подключения питания применится правило для сети." = "This wallpaper is set to stay still on battery. Click Animate Now for temporary animation. Connecting power will apply the external-power rule.";
+"От сети для этих обоев выбран статичный режим. Нажми «Оживить сейчас» для временной анимации или измени правило питания." = "This wallpaper is set to stay still on external power. Click Animate Now for temporary animation, or change the power rule.";
+"Источник питания пока неизвестен, поэтому применяется правило для питания от сети: статичный режим. Нажми «Оживить сейчас» для временной анимации." = "The power source is unknown, so the external-power rule applies: still wallpaper. Click Animate Now for temporary animation.";
+"Окна закрывают рабочий стол на всех экранах с обоями. Видео возобновится на каждом экране, когда рабочий стол на нём снова станет виден." = "Windows cover the desktop on every wallpaper display. The video will resume on each display when its desktop becomes visible again.";
+"Используются общие правила из раздела «Питание»." = "The shared rules from Power apply.";
+"Используются индивидуальные правила из редактора этих обоев." = "The individual rules in this wallpaper’s editor apply.";
+"Ты поставил обои на паузу. Нажми «Продолжить», чтобы снять ручную паузу. Затем применятся правила питания и видимости рабочего стола." = "You paused the wallpaper. Click Resume to clear the manual pause. Power and desktop visibility rules will then apply.";
+"Заставка (Beta)" = "Screen Saver (Beta)";
+"Заставка (Beta)…" = "Screen Saver (Beta)…";
+
+// MyWallpaper 1.0.0 release notes.
+"Первый стабильный выпуск" = "The first stable release";
+"Твои обои, понятные настройки и помощь рядом." = "Your wallpapers, clear settings, and help close by.";
+"Подсказки помогут добавить видео и найти управление. Их можно снова открыть в «Основные»." = "Tips help you add a video and find the controls. Reopen them anytime in General.";
+"Понятная пауза и диагностика" = "Clear pause reasons and diagnostics";
+"Статус объясняет паузу. «Скопировать диагностику» готовит отчёт без путей к файлам и названий видео." = "The status explains pauses. Copy Diagnostics prepares a report without file paths or video names.";
+"Английский по умолчанию" = "English by default";
+"Новые установки запускаются на английском. Ранее выбранный язык сохраняется." = "New installations start in English. Your previously selected language is preserved.";
+"Заставки помечены Beta" = "Screen savers are marked Beta";
+"Работа зависит от версии macOS. Видео за полем ввода пароля не поддерживается." = "Behavior depends on the macOS version. Video behind the password field is not supported.";
