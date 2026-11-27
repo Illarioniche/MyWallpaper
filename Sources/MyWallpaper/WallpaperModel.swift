@@ -34,6 +34,7 @@ final class WallpaperModel: ObservableObject {
     @Published private(set) var isTemporarilyAnimating = false
     @Published private(set) var legacyCurrentWallpaperID: UUID?
 
+    @Published private(set) var showsQuickStart: Bool
     @Published private(set) var activeWallpaperID: UUID?
     @Published private(set) var isWorkingWithWallpapers = false
 
@@ -139,12 +140,76 @@ final class WallpaperModel: ObservableObject {
     var status: String {
         if isLoading { return localizer.text("Загружаем видео…") }
         if !hasWallpaper { return selectedURL == nil ? localizer.text("Выбери своё настроение") : localizer.text("Обои выключены") }
-        if let pauseReason { return pauseReason }
-        if isPausedForOcclusion { return localizer.text("Пауза: рабочий стол скрыт") }
+        if let cause = currentPauseCause { return localizer.text(cause.titleKey) }
         if isPlaying && occludedDisplayCount > 0 {
             return localizer.format("Воспроизведение: %@ из %@ экранов", String(displayCount - occludedDisplayCount), String(displayCount))
         }
         return isPlaying ? localizer.text("Обои воспроизводятся") : localizer.text("Подготовка видео…")
+    }
+
+    var currentPauseCause: WallpaperPauseCause? {
+        WallpaperPauseCause.current(policy: policy, isLoading: isLoading, hasWallpaper: hasWallpaper,
+                                    desktopHidden: isPausedForOcclusion)
+    }
+
+    var playbackExplanation: String? {
+        guard let cause = currentPauseCause else { return nil }
+        return cause.explanation(using: localizer, usesGlobalPowerRules: activeWallpaperUsesGlobalPowerRules)
+    }
+
+    func showQuickStart() { showsQuickStart = true }
+
+    func dismissQuickStart() {
+        preferences.hasSeenQuickStart = true
+        showsQuickStart = false
+    }
+
+    var diagnosticSnapshot: AppDiagnosticSnapshot {
+        var snapshot = AppDiagnosticSnapshot()
+        snapshot.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        snapshot.appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        snapshot.systemVersion = ProcessInfo.processInfo.operatingSystemVersion
+        snapshot.language = language
+        if isLoading { snapshot.playback = .loading }
+        else if !hasWallpaper { snapshot.playback = selectedURL == nil ? .empty : .stopped }
+        else if currentPauseCause != nil { snapshot.playback = .paused }
+        else { snapshot.playback = isPlaying ? .playing : .preparing }
+        snapshot.pauseCause = currentPauseCause?.diagnosticCause ?? .none
+        snapshot.userPaused = userPaused
+        snapshot.isTemporarilyAnimating = isTemporarilyAnimating
+        snapshot.connectedDisplayCount = NSScreen.screens.count
+        snapshot.wallpaperDisplayCount = displayCount
+        snapshot.occludedDisplayCount = occludedDisplayCount
+        snapshot.powerSource = powerSource
+        snapshot.lowPowerMode = policy.lowPowerMode
+        snapshot.effectivePowerRules = effectivePowerRules
+        snapshot.usesGlobalPowerRules = activeWallpaperUsesGlobalPowerRules
+        snapshot.wallpaperCount = wallpaperLibrary.entries.count
+        snapshot.screenSaverCount = screenSaver.entries.count
+        snapshot.screenSaverSyncEnabled = syncScreenSaver
+        snapshot.screenSaverSyncInstalled = screenSaverSync.isInstalled
+        snapshot.loginStatus = loginItems.status
+        snapshot.loginAvailability = loginItems.availability
+        snapshot.automaticUpdateChecksEnabled = updates.automaticChecksEnabled
+        snapshot.updateCheck = .init(updates.state)
+        snapshot.updateInstallation = .init(updates.installation.state)
+        snapshot.lastUpdateCheck = updates.lastChecked
+        if errorMessage != nil && errorMessage != forwardedLoginError { snapshot.failures.insert(.wallpaper) }
+        if loginItems.errorMessage != nil { snapshot.failures.insert(.login) }
+        if wallpaperLibrary.failure != nil || !wallpaperLibrary.libraryWarnings.isEmpty { snapshot.failures.insert(.wallpaperLibrary) }
+        if screenSaver.failure != nil || !screenSaver.libraryWarnings.isEmpty { snapshot.failures.insert(.screenSaver) }
+        if screenSaverSync.failure != nil { snapshot.failures.insert(.screenSaverSync) }
+        if case .failed = updates.state { snapshot.failures.insert(.updateCheck) }
+        if case .failed = updates.installation.state { snapshot.failures.insert(.updateInstallation) }
+        return snapshot
+    }
+
+    /// Only a deliberate user action writes to the clipboard. No report is sent.
+    @discardableResult
+    func copyDiagnostics(to pasteboard: NSPasteboard = .general) -> Bool {
+        let report = diagnosticSnapshot.formattedText()
+        pasteboard.clearContents()
+        return pasteboard.setString(report, forType: .string)
     }
 
     init(preferences: WallpaperPreferences = WallpaperPreferences(),
@@ -156,6 +221,9 @@ final class WallpaperModel: ObservableObject {
          wallpaperLibrary: WallpaperLibraryController? = nil,
          screenSaverSync: ScreenSaverSyncController? = nil) {
         self.preferences = preferences
+        let hasExistingSetup = preferences.videoBookmark != nil || preferences.activeWallpaperID != nil
+        showsQuickStart = !preferences.hasSeenQuickStart && !hasExistingSetup
+        if hasExistingSetup && !preferences.hasSeenQuickStart { preferences.hasSeenQuickStart = true }
         let hadGlobalRules = preferences.hasStoredGlobalPowerRules
         let defaults = preferences.globalPowerRules
         let cachedPower = WallpaperPowerRules(animateOnExternalPower: preferences.animateOnExternalPower,

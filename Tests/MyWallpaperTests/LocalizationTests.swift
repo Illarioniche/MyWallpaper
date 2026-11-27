@@ -5,13 +5,22 @@ import Testing
 @Suite
 struct LocalizationTests {
     @Test
+    func defaultLanguageIsEnglishEvenOnARussianSystem() {
+        let localizer = AppLocalizer(preferredLanguages: ["ru-RU", "en-US"])
+        #expect(localizer.language == .english)
+        #expect(localizer.resolvedCode == "en")
+        #expect(localizer == .english)
+        #expect(localizer.text("Системный") == "System")
+    }
+
+    @Test
     func systemLanguageUsesTheFirstSupportedPreferenceIncludingRegionalIdentifiers() {
-        #expect(AppLocalizer(preferredLanguages: ["fr-FR", "ru-RU", "en-US"]).resolvedCode == "ru")
-        #expect(AppLocalizer(preferredLanguages: ["en-GB", "ru"]).resolvedCode == "en")
-        #expect(AppLocalizer(preferredLanguages: ["RU_ru", "en"]).resolvedCode == "ru")
-        #expect(AppLocalizer(preferredLanguages: ["fr", "de"]).resolvedCode == "en")
-        #expect(AppLocalizer(preferredLanguages: []).resolvedCode == "en")
-        #expect(AppLocalizer(preferredLanguages: ["russian", "eng"]).resolvedCode == "en")
+        #expect(AppLocalizer(language: .system, preferredLanguages: ["fr-FR", "ru-RU", "en-US"]).resolvedCode == "ru")
+        #expect(AppLocalizer(language: .system, preferredLanguages: ["en-GB", "ru"]).resolvedCode == "en")
+        #expect(AppLocalizer(language: .system, preferredLanguages: ["RU_ru", "en"]).resolvedCode == "ru")
+        #expect(AppLocalizer(language: .system, preferredLanguages: ["fr", "de"]).resolvedCode == "en")
+        #expect(AppLocalizer(language: .system, preferredLanguages: []).resolvedCode == "en")
+        #expect(AppLocalizer(language: .system, preferredLanguages: ["russian", "eng"]).resolvedCode == "en")
     }
 
     @Test

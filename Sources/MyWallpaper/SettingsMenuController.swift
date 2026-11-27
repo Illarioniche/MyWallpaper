@@ -23,12 +23,12 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         add(model.localizer.text("Открыть настройки…"), action: #selector(openSettings), to: menu)
         add(model.localizer.text("Общие правила питания…"), action: #selector(openPower), to: menu)
-        add(model.localizer.text("Мои заставки…"), action: #selector(openScreenSaver), to: menu)
+        add(model.localizer.text("Заставка (Beta)…"), action: #selector(openScreenSaver), to: menu)
         menu.addItem(.separator())
-        let updateTitle = model.updates.availableRelease.map { model.localizer.format("Доступна версия %@…", $0.version) }
+        let updateTitle = model.updates.offeredRelease.map { model.localizer.format("Доступна версия %@…", $0.version) }
             ?? (model.updates.isChecking ? model.localizer.text("Проверяем обновления…") : model.localizer.text("Проверить обновления…"))
         let update = add(updateTitle, action: #selector(checkUpdates), to: menu)
-        update.isEnabled = !model.updates.isChecking
+        update.isEnabled = !model.updates.isChecking && !model.updates.installation.isBusy
     }
 
     @objc private func openSettings() { onOpenSettings?() }
@@ -36,7 +36,7 @@ final class SettingsMenuController: NSObject, NSMenuDelegate {
     @objc private func openScreenSaver() { onOpenScreenSaver?() }
     @objc private func checkUpdates() {
         onOpenUpdates?()
-        if model.updates.availableRelease == nil {
+        if model.updates.offeredRelease == nil {
             Task { await model.updates.checkNow() }
         }
     }

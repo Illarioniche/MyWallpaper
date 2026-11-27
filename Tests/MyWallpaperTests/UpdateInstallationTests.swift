@@ -34,6 +34,24 @@ struct UpdateInstallationTests {
     }
 
     @Test
+    func releaseWithoutDMGDoesNotStartAnInstallerSession() {
+        let harness = InstallHarness()
+        let available = release()
+        let unfinished = UpdateRelease(version: available.version, title: available.title, notes: available.notes,
+                                       pageURL: available.pageURL, downloadURL: nil, checksumURL: nil)
+        harness.controller.start(release: unfinished, currentVersion: "0.9.0")
+        #expect(harness.starts == 0)
+        #expect(harness.controller.activeSessionID == nil)
+        #expect(!harness.controller.isBusy)
+        #expect(harness.controller.state == .failed(UpdateInstallFailure(
+            message: "DMG пока не прикреплён. Открой страницу релиза, чтобы посмотреть доступные файлы.")))
+
+        harness.controller.start(release: available, currentVersion: "0.9.0")
+        #expect(harness.starts == 1, "A later check with a ready DMG must still be installable.")
+        #expect(harness.controller.state == .checking)
+    }
+
+    @Test
     func appcastMustMatchConsentAndAdvanceBuildBeforeDownload() throws {
         let installer = InstallHarness().controller
         installer.start(release: release(), currentVersion: "0.9.0")
@@ -171,7 +189,9 @@ struct UpdateInstallationTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let data = Data("""
         {"tag_name":"v0.10.0","name":"New version","body":"Notes","draft":false,"prerelease":false,
-        "html_url":"https://github.com/Illarioniche/MyWallpaper/releases/tag/v0.10.0","assets":[]}
+        "html_url":"https://github.com/Illarioniche/MyWallpaper/releases/tag/v0.10.0",
+        "assets":[{"name":"MyWallpaper-0.10.0-universal.dmg","state":"uploaded",
+        "browser_download_url":"https://github.com/Illarioniche/MyWallpaper/releases/download/v0.10.0/MyWallpaper-0.10.0-universal.dmg"}]}
         """.utf8)
         let harness = InstallHarness()
         let clock = InstallTestClock()

@@ -127,7 +127,7 @@ final class LoginItemController: ObservableObject {
 
     init(service: (any LoginItemServicing)? = nil,
          notificationCenter: NotificationCenter = .default,
-         localizer: AppLocalizer = .russian) {
+         localizer: AppLocalizer = .english) {
         let resolvedService = service ?? SystemLoginItemService()
         self.service = resolvedService
         self.localizer = localizer

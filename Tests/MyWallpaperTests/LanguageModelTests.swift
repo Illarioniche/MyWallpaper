@@ -8,20 +8,41 @@ import Testing
 @MainActor
 struct LanguageModelTests {
     @Test
-    func preferenceDefaultsToSystemAndPersistsWithoutChangingExistingSettings() throws {
+    func preferenceDefaultsToEnglishAndPreservesExplicitChoicesAndOtherSettings() throws {
         try withDefaults { defaults in
             let preferences = WallpaperPreferences(defaults: defaults)
-            #expect(preferences.language == .system)
+            #expect(preferences.language == .english)
+            #expect(defaults.object(forKey: "appLanguage") == nil, "Reading the default must not rewrite stored preferences.")
             defaults.set("unsupported", forKey: "appLanguage")
-            #expect(preferences.language == .system)
+            #expect(preferences.language == .english)
             preferences.isMuted = true
             preferences.volume = 0.25
             preferences.userPaused = true
-            preferences.language = .english
-            let restored = WallpaperPreferences(defaults: defaults)
-            #expect(restored.language == .english)
-            #expect(restored.volume == 0.25)
-            #expect(restored.isMuted && restored.userPaused)
+            for choice in [AppLanguage.russian, .system, .english] {
+                preferences.language = choice
+                let restored = WallpaperPreferences(defaults: defaults)
+                #expect(restored.language == choice)
+                #expect(defaults.string(forKey: "appLanguage") == choice.rawValue)
+                #expect(restored.volume == 0.25)
+                #expect(restored.isMuted && restored.userPaused)
+            }
+        }
+    }
+
+    @Test
+    func freshModelStartsInEnglishAcrossMenusAndControllersWithoutEnablingPlayback() throws {
+        try withDefaults { defaults in
+            let preferences = WallpaperPreferences(defaults: defaults)
+            let model = makeModel(preferences, defaults: defaults)
+            defer { model.shutDown() }
+            #expect(model.language == .english)
+            #expect(model.localizer.resolvedCode == "en")
+            #expect(model.loginItems.localizer.resolvedCode == "en")
+            #expect(model.updates.localizer.resolvedCode == "en")
+            #expect(SettingsMenuController(model: model).makeMenu().title == "Settings")
+            model.selectVideo(URL(string: "https://example.invalid/not-a-local-file.mp4")!)
+            #expect(model.errorMessage == AppLocalizer.english.text("Выбери видео, сохранённое на этом Mac."))
+            #expect(!model.isPlaying && !model.hasWallpaper && preferences.isMuted)
         }
     }
 

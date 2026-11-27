@@ -62,7 +62,7 @@ ARCHITECTURES="$(/usr/bin/xcrun lipo -archs "$APP_EXECUTABLE")"
 case "$ARCHITECTURES" in
     "arm64 x86_64"|"x86_64 arm64")
         ARCHITECTURE_SUFFIX="universal"
-        ARCHITECTURE_DESCRIPTION="Universal: Apple Silicon и Intel"
+        ARCHITECTURE_DESCRIPTION="Universal: Apple Silicon + Intel"
         ;;
     arm64)
         ARCHITECTURE_SUFFIX="arm64"
@@ -111,6 +111,26 @@ mkdir -p "$PAYLOAD_PATH" "$MOUNT_PATH"
 ln -s /Applications "$PAYLOAD_PATH/Applications"
 cat > "$PAYLOAD_PATH/INSTALL.txt" <<EOF
 MyWallpaper $VERSION
+macOS $MINIMUM_MACOS or later · $ARCHITECTURE_DESCRIPTION
+
+Installation
+1. Quit the previous version of MyWallpaper if it is running.
+2. Drag MyWallpaper.app to Applications.
+3. Open MyWallpaper from Applications and choose an MP4 or MOV video.
+4. Eject this disk image after installation.
+
+Closing the window keeps the app in the menu bar.
+Launch at login is available in General.
+New installations use English; choose Russian or System in General → App Language.
+
+First launch
+This build has a local ad-hoc signature and has not been notarized by Apple.
+If macOS cannot verify the developer or app, try opening it, then go to
+System Settings → Privacy & Security → Open Anyway, if you trust the download source.
+Apple's instructions: https://support.apple.com/102445
+
+---
+
 macOS $MINIMUM_MACOS и новее · $ARCHITECTURE_DESCRIPTION
 
 Установка
@@ -121,6 +141,8 @@ macOS $MINIMUM_MACOS и новее · $ARCHITECTURE_DESCRIPTION
 
 После закрытия окна приложение остаётся в строке меню.
 Автозапуск настраивается в разделе «Основные».
+При новой установке используется английский; русский и системный доступны
+в General → App Language («Основные → Язык приложения»).
 
 Первый запуск
 Эта сборка подписана локально (ad-hoc) и не прошла нотарификацию Apple.

@@ -12,6 +12,19 @@ struct ScreenSaverSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.indigo)
+                    .accessibilityHidden(true)
+                Text(localizer.text("Экспериментальная функция. Видео за полем ввода пароля и на экране входа после перезагрузки пока не поддерживается. Отображением заставки при блокировке управляет macOS."))
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+
             ScreenSaverSyncPane(model: model)
             if let failure = screenSaver.failure {
                 message(localizer.text(failure.ruKey), detail: failure.detail, isError: true)
@@ -85,7 +98,6 @@ struct ScreenSaverSettingsPane: View {
                     Text(localizer.text("Заставки работают без запущенного MyWallpaper и всегда без звука."))
                     Divider()
                     Text(localizer.text("После установки проверь, что заставка появилась в системном списке и работает в предпросмотре."))
-                    Text(localizer.text("Экспериментальная функция. Видео за полем ввода пароля и на экране входа после перезагрузки пока не поддерживается. Отображением заставки при блокировке управляет macOS."))
                 }
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true).padding(16)

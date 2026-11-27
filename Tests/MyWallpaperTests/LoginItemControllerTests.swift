@@ -9,10 +9,20 @@ import Testing
 @MainActor
 struct LoginItemControllerTests {
     @Test
+    func defaultsToEnglishWithoutChangingRegistration() {
+        let service = FakeLoginItemService(status: .disabled)
+        let controller = LoginItemController(service: service)
+        #expect(controller.localizer == .english)
+        #expect(controller.statusDetail == AppLocalizer.english.text("Открывать в строке меню без лишних окон."))
+        #expect(service.registerCalls == 0)
+        #expect(service.unregisterCalls == 0)
+    }
+
+    @Test
     func changingLanguageRepublishesAnExistingFailureWithoutRepeatingRegistration() throws {
         let service = FakeLoginItemService(status: .disabled)
         service.registerError = LocalizationLoginFailure()
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
         controller.setEnabled(true)
         let russian = try #require(controller.errorMessage)
         var published: [String?] = []
@@ -38,7 +48,7 @@ struct LoginItemControllerTests {
     func locationExplanationAndStatusChangeLanguageWithoutServiceActions() {
         let service = FakeLoginItemService(status: .notFound)
         service.availability = .readOnlyVolume
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
         controller.setEnabled(true)
         let russian = controller.statusDetail
         controller.localizer = AppLocalizer(language: .english)
@@ -57,7 +67,7 @@ struct LoginItemControllerTests {
     @Test(arguments: [LoginItemStatus.disabled, .enabled, .requiresApproval, .notFound, .unavailable])
     func initializationReadsSystemStatusWithoutRegistration(_ status: LoginItemStatus) {
         let service = FakeLoginItemService(status: status)
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         #expect(controller.status == status)
         #expect(controller.errorMessage == nil)
@@ -73,7 +83,7 @@ struct LoginItemControllerTests {
         #expect(LoginItemStatus(serviceStatus: .enabled) == .enabled)
 
         let service = FakeLoginItemService(status: .notFound)
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
         #expect(controller.availability == .available)
         #expect(controller.canToggle)
         #expect(!controller.statusDetail.contains("из собранного приложения"))
@@ -89,7 +99,7 @@ struct LoginItemControllerTests {
     func aMissingServiceCanBeRetriedAfterFailure() {
         let service = FakeLoginItemService(status: .notFound)
         service.registerError = TestFailure.denied
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         controller.setEnabled(true)
         #expect(controller.status == .notFound)
@@ -111,7 +121,7 @@ struct LoginItemControllerTests {
     func aRegistrationWithoutConfirmationKeepsRetryAvailable(_ result: LoginItemStatus) {
         let service = FakeLoginItemService(status: .notFound)
         service.statusAfterRegister = result
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         controller.setEnabled(true)
         #expect(controller.status == result)
@@ -122,7 +132,7 @@ struct LoginItemControllerTests {
     @Test
     func anUnknownStatusExplainsTheProblemWithoutClaimingTheAppIsUnbundled() {
         let service = FakeLoginItemService(status: .unavailable)
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         #expect(!controller.canToggle)
         #expect(controller.statusDetail.contains("состояние автозапуска"))
@@ -137,7 +147,7 @@ struct LoginItemControllerTests {
     func unsuitableLocationsDoNotAttemptRegistration(_ availability: LoginItemAvailability) {
         let service = FakeLoginItemService(status: .notFound)
         service.availability = availability
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         #expect(controller.availability == availability)
         #expect(!controller.canToggle)
@@ -159,7 +169,7 @@ struct LoginItemControllerTests {
     func refreshingAvailabilityDoesNotRegisterAndClearsItsObsoleteError() {
         let service = FakeLoginItemService(status: .notFound)
         service.availability = .readOnlyVolume
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
         controller.setEnabled(true)
         #expect(controller.errorMessage != nil)
 
@@ -217,7 +227,7 @@ struct LoginItemControllerTests {
     @Test
     func enableAndDisableFollowServiceState() {
         let service = FakeLoginItemService(status: .disabled)
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         controller.setEnabled(true)
         #expect(controller.status == .enabled)
@@ -234,7 +244,7 @@ struct LoginItemControllerTests {
     func registrationRequiringApprovalDoesNotPretendToBeEnabled() {
         let service = FakeLoginItemService(status: .disabled)
         service.statusAfterRegister = .requiresApproval
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         controller.setEnabled(true)
         #expect(controller.status == .requiresApproval)
@@ -252,7 +262,7 @@ struct LoginItemControllerTests {
     @Test
     func pendingRegistrationCanBeRemoved() {
         let service = FakeLoginItemService(status: .requiresApproval)
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         controller.setEnabled(false)
 
@@ -265,7 +275,7 @@ struct LoginItemControllerTests {
         let service = FakeLoginItemService(status: .disabled)
         service.registerError = TestFailure.denied
         service.statusAfterRegistrationFailure = .requiresApproval
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         controller.setEnabled(true)
 
@@ -277,7 +287,7 @@ struct LoginItemControllerTests {
     func failedUnregistrationKeepsTheTrueEnabledState() {
         let service = FakeLoginItemService(status: .enabled)
         service.unregisterError = TestFailure.denied
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         controller.setEnabled(false)
 
@@ -293,7 +303,7 @@ struct LoginItemControllerTests {
     @Test
     func refreshReflectsExternalRevokeAndApproval() {
         let service = FakeLoginItemService(status: .enabled)
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
 
         service.status = .requiresApproval
         controller.refresh()
@@ -313,7 +323,7 @@ struct LoginItemControllerTests {
     @Test
     func settingAnAlreadySatisfiedValueDoesNotReregister() {
         let service = FakeLoginItemService(status: .enabled)
-        let controller = LoginItemController(service: service)
+        let controller = LoginItemController(service: service, localizer: .russian)
         controller.setEnabled(true)
 
         service.status = .disabled

@@ -18,6 +18,23 @@ struct WhatsNewRelease: Equatable, Sendable {
     let features: [WhatsNewFeature]
 
     static let bundled: [Self] = [
+        Self(version: "1.0.0", build: "13",
+             titleKey: "Первый стабильный выпуск",
+             subtitleKey: "Твои обои, понятные настройки и помощь рядом.",
+             features: [
+                WhatsNewFeature(symbol: "hand.wave.fill",
+                                titleKey: "Краткая инструкция",
+                                detailKey: "Подсказки помогут добавить видео и найти управление. Их можно снова открыть в «Основные»."),
+                WhatsNewFeature(symbol: "info.circle.fill",
+                                titleKey: "Понятная пауза и диагностика",
+                                detailKey: "Статус объясняет паузу. «Скопировать диагностику» готовит отчёт без путей к файлам и названий видео."),
+                WhatsNewFeature(symbol: "globe",
+                                titleKey: "Английский по умолчанию",
+                                detailKey: "Новые установки запускаются на английском. Ранее выбранный язык сохраняется."),
+                WhatsNewFeature(symbol: "moon.stars.fill",
+                                titleKey: "Заставки помечены Beta",
+                                detailKey: "Работа зависит от версии macOS. Видео за полем ввода пароля не поддерживается.")
+             ]),
         Self(version: "0.10.0", build: "12",
              titleKey: "Обновления без лишних шагов",
              subtitleKey: "Всё готово для следующих версий MyWallpaper.",

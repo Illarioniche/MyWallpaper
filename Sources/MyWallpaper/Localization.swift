@@ -23,9 +23,10 @@ struct AppLocalizer: Sendable, Equatable {
     let resolvedCode: String
     var locale: Locale { Locale(identifier: resolvedCode) }
 
+    static let english = AppLocalizer(language: .english)
     static let russian = AppLocalizer(language: .russian)
 
-    init(language: AppLanguage = .system, preferredLanguages: [String] = Locale.preferredLanguages) {
+    init(language: AppLanguage = .english, preferredLanguages: [String] = Locale.preferredLanguages) {
         self.language = language
         if language == .system {
             resolvedCode = preferredLanguages.lazy.compactMap { identifier in

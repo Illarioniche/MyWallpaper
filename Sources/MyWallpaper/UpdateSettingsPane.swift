@@ -3,7 +3,7 @@ import SwiftUI
 @MainActor
 struct UpdateAvailableBanner: View {
     let version: String
-    var localizer: AppLocalizer = .russian
+    var localizer: AppLocalizer = .english
     var onOpen: () -> Void
 
     var body: some View {
@@ -28,7 +28,7 @@ struct UpdateAvailableBanner: View {
 @MainActor
 struct UpdateSettingsPane: View {
     @ObservedObject var updates: UpdateController
-    var localizer: AppLocalizer = .russian
+    var localizer: AppLocalizer = .english
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -110,7 +110,7 @@ struct UpdateSettingsPane: View {
                 }
                 installationStatus
                 HStack(spacing: 12) {
-                    if !updates.installation.isBusy && updates.installation.canInstall {
+                    if !updates.installation.isBusy && updates.installation.canInstall && release.downloadURL != nil {
                         Button {
                             updates.installAvailableRelease()
                         } label: {
@@ -119,6 +119,8 @@ struct UpdateSettingsPane: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(updates.isChecking)
+                    }
+                    if !updates.installation.isBusy {
                         Button(localizer.text("Позже")) { updates.deferAvailableRelease() }
                     }
                     if updates.installation.canCancel {
@@ -144,13 +146,14 @@ struct UpdateSettingsPane: View {
                 if release.downloadURL == nil {
                     Text(localizer.text("DMG пока не прикреплён. Открой страницу релиза, чтобы посмотреть доступные файлы."))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    Divider()
+                    Text(localizer.text(updates.installation.canInstall
+                        ? "Приложение скачает и проверит обновление, затем перезапустится. Коллекции, настройки и режим обоев сохранятся."
+                        : "Обновление внутри приложения доступно в собранном MyWallpaper.app. Можно установить DMG вручную."))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Divider()
-                Text(localizer.text(updates.installation.canInstall
-                    ? "Приложение скачает и проверит обновление, затем перезапустится. Коллекции, настройки и режим обоев сохранятся."
-                    : "Обновление внутри приложения доступно в собранном MyWallpaper.app. Можно установить DMG вручную."))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
